@@ -13,7 +13,9 @@ import java.time.LocalDateTime;
         @Index(name = "idx_history_user_played", columnList = "user_id, played_at"),
         @Index(name = "idx_history_song", columnList = "song_id"),
         @Index(name = "idx_history_episode", columnList = "episode_id"),
-        @Index(name = "idx_history_played_at", columnList = "played_at")
+        @Index(name = "idx_history_played_at", columnList = "played_at"),
+        @Index(name = "idx_history_completion", columnList = "completed, played_at"),
+        @Index(name = "idx_history_duration", columnList = "play_duration_seconds, completed")
 })
 @Getter
 @Setter
@@ -38,6 +40,9 @@ public class PlayHistory {
     @Column(name = "played_at", nullable = false)
     private LocalDateTime playedAt;
 
+    @Column(name = "play_duration_seconds", nullable = false)
+    private Integer playDurationSeconds = 0;
+
     @Column(name = "completed", nullable = false)
     private Boolean completed;
 
@@ -53,8 +58,25 @@ public class PlayHistory {
     }
 
     private void validateContentReference() {
-        if ((songId == null && episodeId == null) || (songId != null && episodeId != null)) {
-            throw new IllegalStateException("Exactly one of songId or episodeId must be set");
+        boolean hasSong = songId != null;
+        boolean hasEpisode = episodeId != null;
+
+        if (!hasSong && !hasEpisode) {
+            throw new IllegalStateException(
+                    "Play history must reference either a song or an episode");
         }
+
+        if (hasSong && hasEpisode) {
+            throw new IllegalStateException(
+                    "Play history cannot reference both song and episode simultaneously");
+        }
+    }
+
+    public String getContentType() {
+        return songId != null ? "SONG" : "EPISODE";
+    }
+
+    public Long getContentId() {
+        return songId != null ? songId : episodeId;
     }
 }
