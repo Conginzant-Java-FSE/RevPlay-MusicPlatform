@@ -1,4 +1,4 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.request;
 
 import com.revplay.revplay.enums.Role;
 import jakarta.validation.constraints.Email;
@@ -9,7 +9,7 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class UserRequestDTO {
+public class UserRequest {
 
     @Email
     @NotBlank
