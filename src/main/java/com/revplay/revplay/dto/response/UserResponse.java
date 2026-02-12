@@ -1,4 +1,4 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.response;
 
 import com.revplay.revplay.enums.Role;
 import lombok.Builder;
@@ -6,7 +6,7 @@ import lombok.Getter;
 
 @Getter
 @Builder
-public class UserResponseDTO {
+public class UserResponse {
 
     private Long userId;
     private String email;
