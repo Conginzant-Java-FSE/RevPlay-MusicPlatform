@@ -1,11 +1,19 @@
 package com.revplay.revplay.dto.response;
+import lombok.*;
+
 import java.time.LocalDate;
 
-public record AlbumResponseDTO(
-        Long albumId,
-        Long artistId,
-        String title,
-        String description,
-        String coverArtUrl,
-        LocalDate releaseDate
-) {}
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class AlbumResponse {
+
+    private Long albumId;
+    private Long artistId;
+    private String title;
+    private String description;
+    private String coverArtUrl;
+    private LocalDate releaseDate;
+}
