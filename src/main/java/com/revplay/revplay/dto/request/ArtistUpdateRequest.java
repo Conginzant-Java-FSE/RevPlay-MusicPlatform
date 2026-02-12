@@ -1,4 +1,4 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.request;
 
 import com.revplay.revplay.enums.ArtistType;
 import jakarta.validation.constraints.NotBlank;

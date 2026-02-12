@@ -1,9 +1,10 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.request;
 
 import com.revplay.revplay.enums.ArtistType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+
 
 public record ArtistCreateRequestDTO(
         @NotNull Long userId,
@@ -17,4 +18,6 @@ public record ArtistCreateRequestDTO(
 
         @NotNull
         ArtistType artistType
-) {}
+) {
+
+}

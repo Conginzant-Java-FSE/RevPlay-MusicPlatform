@@ -1,4 +1,4 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.response;
 import com.revplay.revplay.enums.ArtistType;
 
 import java.time.LocalDateTime;
