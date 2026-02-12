@@ -1,4 +1,4 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.response;
 import java.time.LocalDate;
 
 public record AlbumResponseDTO(

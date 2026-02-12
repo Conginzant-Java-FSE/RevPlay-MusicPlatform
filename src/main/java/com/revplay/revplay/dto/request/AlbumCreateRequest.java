@@ -1,10 +1,13 @@
-package com.revplay.revplay.dto;
+package com.revplay.revplay.dto.request;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 
-public record AlbumUpdateRequestDTO(
+public record AlbumCreateRequestDTO(
+        @NotNull Long artistId,
+
         @NotBlank
         @Size(max = 150)
         String title,
@@ -17,3 +20,4 @@ public record AlbumUpdateRequestDTO(
 
         LocalDate releaseDate
 ) {}
+
