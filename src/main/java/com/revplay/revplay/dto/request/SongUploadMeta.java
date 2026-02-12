@@ -1,27 +1,28 @@
 package com.revplay.revplay.dto.request;
 import com.revplay.revplay.enums.ContentVisibility;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
+import lombok.*;
 
 import java.time.LocalDate;
 
-public record SongUploadMetaDTO(
-        @NotNull Long artistId,
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class SongUploadMeta {
 
-        Long albumId,
+        @NotBlank(message = "title is required")
+        @Size(max = 200, message = "title must be at most 200 characters")
+        private String title;
 
-        @NotBlank
-        @Size(max = 200)
-        String title,
+        private Long albumId;
 
-        LocalDate releaseDate,
+        private LocalDate releaseDate;
 
-        ContentVisibility visibility,
+        @Builder.Default
+        private ContentVisibility visibility = ContentVisibility.PUBLIC;
+}
 
-        // fallback only (mp3 duration read fail ayite use cheyyadaniki)
-        @Positive
-        Integer durationSeconds
-) {}
 
