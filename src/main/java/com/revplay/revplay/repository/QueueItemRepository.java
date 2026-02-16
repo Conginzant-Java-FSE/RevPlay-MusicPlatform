@@ -17,6 +17,8 @@ public interface QueueItemRepository extends JpaRepository<QueueItem, Long> {
 
     Optional<QueueItem> findByUserIdAndPosition(Long userId, Integer position);
 
+    Optional<QueueItem> findFirstByUserIdOrderByPositionAsc(Long userId);
+
     @Query("SELECT MAX(q.position) FROM QueueItem q WHERE q.userId = :userId")
     Integer findMaxPositionByUserId(@Param("userId") Long userId);
 
