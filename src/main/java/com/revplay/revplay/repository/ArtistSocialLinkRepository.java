@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ArtistSocialLinkRepository extends JpaRepository<ArtistSocialLink, Long> {
-    List<ArtistSocialLink> findByArtist_ArtistId(Long artistId);
-    Optional<ArtistSocialLink> findByArtist_ArtistIdAndPlatform(Long artistId, SocialPlatform platform);
+    boolean existsByArtist_ArtistIdAndPlatform(Long artistId, SocialPlatform platform);
+
+    List<ArtistSocialLink> findAllByArtist_ArtistIdOrderByLinkIdAsc(Long artistId);
 }
