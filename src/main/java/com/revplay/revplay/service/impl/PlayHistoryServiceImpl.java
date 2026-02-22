@@ -6,6 +6,7 @@ import com.revplay.revplay.dto.response.RecentPlayResponse;
 import com.revplay.revplay.entity.PlayHistory;
 import com.revplay.revplay.mapper.PlayHistoryMapper;
 import com.revplay.revplay.repository.PlayHistoryRepository;
+import com.revplay.revplay.service.PlayHistoryService;
 import com.revplay.revplay.util.PlaybackConstants;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -21,7 +22,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
-public class PlayHistoryServiceImpl {
+public class PlayHistoryServiceImpl implements PlayHistoryService {
 
     private static final Logger logger = LoggerFactory.getLogger(PlayHistoryServiceImpl.class);
 
