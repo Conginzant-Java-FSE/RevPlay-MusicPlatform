@@ -1,7 +1,6 @@
-package com.revplay.revplay.service.Impl;
+package com.revplay.revplay.service.impl;
 
 import com.revplay.revplay.dto.response.AdminAuditLogResponse;
-import com.revplay.revplay.entity.AdminAuditLog;
 import com.revplay.revplay.entity.User;
 import com.revplay.revplay.mapper.AdminAuditLogMapper;
 import com.revplay.revplay.repository.AdminAuditLogRepository;

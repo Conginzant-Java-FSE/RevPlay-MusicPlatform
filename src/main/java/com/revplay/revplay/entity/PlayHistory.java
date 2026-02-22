@@ -49,6 +49,9 @@ public class PlayHistory {
     @PrePersist
     protected void onCreate() {
         this.playedAt = LocalDateTime.now();
+        if (this.playDurationSeconds == null) {
+            this.playDurationSeconds = 0;
+        }
         validateContentReference();
     }
 
