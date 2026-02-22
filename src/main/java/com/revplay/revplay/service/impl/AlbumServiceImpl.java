@@ -17,15 +17,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class AlbumServiceimpl implements AlbumService {
+public class AlbumServiceImpl implements AlbumService {
 
-    private static final Logger log = LoggerFactory.getLogger(AlbumServiceimpl.class);
+    private static final Logger log = LoggerFactory.getLogger(AlbumServiceImpl.class);
 
     private final AlbumRepository albumRepository;
     private final CurrentArtistResolver currentArtistResolver;
     private final AlbumMapper albumMapper;
 
-    public AlbumServiceimpl(
+    public AlbumServiceImpl(
             AlbumRepository albumRepository,
             CurrentArtistResolver currentArtistResolver,
             AlbumMapper albumMapper) {
@@ -79,3 +79,4 @@ public class AlbumServiceimpl implements AlbumService {
         return albumMapper.toResponse(album);
     }
 }
+
