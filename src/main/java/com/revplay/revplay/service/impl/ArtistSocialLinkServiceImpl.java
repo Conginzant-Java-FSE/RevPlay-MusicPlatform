@@ -1,4 +1,4 @@
-package com.revplay.revplay.service.Impl;
+package com.revplay.revplay.service.impl;
 import com.revplay.revplay.dto.request.ArtistSocialLinkCreate;
 import com.revplay.revplay.dto.response.ArtistSocialLinkResponse;
 import com.revplay.revplay.entity.Artist;
