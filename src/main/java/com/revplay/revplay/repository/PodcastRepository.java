@@ -7,4 +7,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PodcastRepository extends JpaRepository<Podcast, Long> {
     List<Podcast> findByArtist_ArtistId(Long artistId);
     List<Podcast> findByCategory_CategoryId(Long categoryId);
+    boolean existsByArtist_ArtistIdAndTitleIgnoreCase(Long artistId, String title);
 }
