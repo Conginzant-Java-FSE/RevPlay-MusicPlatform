@@ -1,5 +1,5 @@
 
-package com.revplay.revplay.service.Impl;
+package com.revplay.revplay.service.impl;
 
 import com.revplay.revplay.dto.request.ArtistCreateRequest;
 import com.revplay.revplay.dto.response.ArtistResponse;
@@ -7,7 +7,6 @@ import com.revplay.revplay.dto.request.ArtistUpdateRequest;
 import com.revplay.revplay.entity.Artist;
 import com.revplay.revplay.entity.User;
 import com.revplay.revplay.exception.ConflictException;
-import com.revplay.revplay.exception.ResourceNotFoundException;
 import com.revplay.revplay.exception.ResourceNotFoundException;
 import com.revplay.revplay.exception.UnauthorizedException;
 import com.revplay.revplay.mapper.ArtistMapper;
