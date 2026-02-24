@@ -1,4 +1,4 @@
-package com.revplay.revplay.service;
+package com.revplay.revplay.service.impl;
 
 import com.revplay.revplay.dto.request.*;
 import com.revplay.revplay.dto.response.*;
