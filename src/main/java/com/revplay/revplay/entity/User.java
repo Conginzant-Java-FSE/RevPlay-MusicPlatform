@@ -39,4 +39,8 @@ public class User {
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    public Object getId() {
+        return null;
+    }
 }

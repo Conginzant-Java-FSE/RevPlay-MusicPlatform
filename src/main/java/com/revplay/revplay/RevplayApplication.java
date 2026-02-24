@@ -9,9 +9,4 @@ public class RevplayApplication {
     public static void main(String[] args) {
         SpringApplication.run(RevplayApplication.class, args);
     }
-
 }
-
-
-
-
