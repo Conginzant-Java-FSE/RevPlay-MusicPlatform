@@ -145,6 +145,53 @@ public interface PlayHistoryRepository extends JpaRepository<PlayHistory, Long> 
                                            @Param("minCompletionRate") double minCompletionRate,
                                            Pageable pageable);
 
+    @Query("SELECT COUNT(DISTINCT ph.songId) FROM PlayHistory ph " +
+            "WHERE ph.userId = :userId AND ph.songId IS NOT NULL " +
+            "AND ph.playedAt >= :startDate")
+    Long countUniqueSongsInPeriod(@Param("userId") Long userId,
+                                  @Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT COUNT(DISTINCT ph.episodeId) FROM PlayHistory ph " +
+            "WHERE ph.userId = :userId AND ph.episodeId IS NOT NULL " +
+            "AND ph.playedAt >= :startDate")
+    Long countUniqueEpisodesInPeriod(@Param("userId") Long userId,
+                                     @Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT CASE WHEN ph.songId IS NOT NULL THEN 'SONG' ELSE 'EPISODE' END, " +
+            "COUNT(ph), COUNT(DISTINCT ph.userId), AVG(ph.playDurationSeconds), " +
+            "AVG(CASE WHEN ph.completed = true THEN 1.0 ELSE 0.0 END) * 100 " +
+            "FROM PlayHistory ph WHERE ph.playedAt >= :startDate " +
+            "GROUP BY CASE WHEN ph.songId IS NOT NULL THEN 'SONG' ELSE 'EPISODE' END")
+    List<Object[]> findPlatformContentComparison(@Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT CAST(ph.playedAt AS date), COUNT(ph), COUNT(DISTINCT ph.userId), " +
+            "AVG(CASE WHEN ph.completed = true THEN 1.0 ELSE 0.0 END) * 100 " +
+            "FROM PlayHistory ph WHERE ph.playedAt >= :startDate " +
+            "GROUP BY CAST(ph.playedAt AS date) ORDER BY CAST(ph.playedAt AS date)")
+    List<Object[]> findDailyEngagementTrends(@Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT FUNCTION('YEARWEEK', ph.playedAt), COUNT(ph), COUNT(DISTINCT ph.userId), " +
+            "AVG(CASE WHEN ph.completed = true THEN 1.0 ELSE 0.0 END) * 100 " +
+            "FROM PlayHistory ph WHERE ph.playedAt >= :startDate " +
+            "GROUP BY FUNCTION('YEARWEEK', ph.playedAt) ORDER BY FUNCTION('YEARWEEK', ph.playedAt)")
+    List<Object[]> findWeeklyEngagementTrends(@Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT FUNCTION('DATE_FORMAT', ph.playedAt, '%Y-%m'), COUNT(ph), COUNT(DISTINCT ph.userId), " +
+            "AVG(CASE WHEN ph.completed = true THEN 1.0 ELSE 0.0 END) * 100 " +
+            "FROM PlayHistory ph WHERE ph.playedAt >= :startDate " +
+            "GROUP BY FUNCTION('DATE_FORMAT', ph.playedAt, '%Y-%m') " +
+            "ORDER BY FUNCTION('DATE_FORMAT', ph.playedAt, '%Y-%m')")
+    List<Object[]> findMonthlyEngagementTrends(@Param("startDate") LocalDateTime startDate);
+
+    @Query("SELECT CASE WHEN ph.songId IS NOT NULL THEN 'SONG' ELSE 'EPISODE' END, " +
+            "COUNT(ph), COUNT(DISTINCT COALESCE(ph.songId, ph.episodeId)), " +
+            "AVG(ph.playDurationSeconds), " +
+            "AVG(CASE WHEN ph.completed = true THEN 1.0 ELSE 0.0 END) * 100 " +
+            "FROM PlayHistory ph WHERE ph.userId = :userId AND ph.playedAt >= :startDate " +
+            "GROUP BY CASE WHEN ph.songId IS NOT NULL THEN 'SONG' ELSE 'EPISODE' END")
+    List<Object[]> findContentComparisonByUser(@Param("userId") Long userId,
+                                               @Param("startDate") LocalDateTime startDate);
+
     @Modifying
     @Transactional
     @Query("DELETE FROM PlayHistory ph WHERE ph.userId = :userId")
