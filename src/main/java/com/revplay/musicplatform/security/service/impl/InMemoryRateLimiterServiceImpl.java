@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class InMemoryRateLimiterServiceImpl implements InMemoryRateLimiterService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryRateLimiterService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryRateLimiterServiceImpl.class);
 
     private final Map<String, Deque<Instant>> requestWindows = new ConcurrentHashMap<>();
 

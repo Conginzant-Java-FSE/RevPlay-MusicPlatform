@@ -1,7 +1,7 @@
 package com.revplay.musicplatform.user.service.impl;
 
-import com.revplay.musicplatform.audit.entity.AuditActionType;
-import com.revplay.musicplatform.audit.entity.AuditEntityType;
+import com.revplay.musicplatform.audit.enums.AuditActionType;
+import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.user.dto.request.UpdateUserRoleRequest;
@@ -22,7 +22,7 @@ import java.time.Instant;
 @Service
 public class UserAccountAdminServiceImpl implements UserAccountAdminService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(UserAccountAdminService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(UserAccountAdminServiceImpl.class);
 
     private final UserRepository userRepository;
     private final AuditLogService auditLogService;

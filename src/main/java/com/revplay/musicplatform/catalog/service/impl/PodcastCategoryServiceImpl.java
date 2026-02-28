@@ -10,6 +10,7 @@ import com.revplay.musicplatform.catalog.entity.PodcastCategory;
 import com.revplay.musicplatform.catalog.mapper.PodcastCategoryMapper;
 import com.revplay.musicplatform.catalog.repository.PodcastCategoryRepository;
 import com.revplay.musicplatform.catalog.service.PodcastCategoryService;
+import com.revplay.musicplatform.exception.ConflictException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

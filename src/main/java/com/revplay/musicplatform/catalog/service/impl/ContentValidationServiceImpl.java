@@ -4,13 +4,15 @@ import com.revplay.musicplatform.catalog.entity.Album;
 import com.revplay.musicplatform.catalog.repository.AlbumRepository;
 import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.catalog.service.ContentValidationService;
+import com.revplay.musicplatform.exception.BadRequestException;
+import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ContentValidationServiceImpl implements ContentValidationService {
-    private static final Logger LOGGER = LoggerFactory.getLogger(ContentValidationService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ContentValidationServiceImpl.class);
     private static final int MAX_SONG_DURATION_SECONDS = 60 * 60;
     private static final int MAX_PODCAST_EPISODE_DURATION_SECONDS = 3 * 60 * 60;
 
