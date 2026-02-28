@@ -5,8 +5,6 @@ import com.revplay.musicplatform.user.enums.UserRole;
 
 import java.util.List;
 
-import com.revplay.musicplatform.exception.ConflictException;
-import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import com.revplay.musicplatform.artist.dto.request.ArtistSocialLinkCreateRequest;
 import com.revplay.musicplatform.artist.dto.request.ArtistSocialLinkUpdateRequest;
 import com.revplay.musicplatform.artist.dto.response.ArtistSocialLinkResponse;

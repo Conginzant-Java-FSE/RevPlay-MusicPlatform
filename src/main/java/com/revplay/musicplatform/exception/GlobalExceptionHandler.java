@@ -1,63 +1,139 @@
 package com.revplay.musicplatform.exception;
 
-import com.revplay.musicplatform.dto.response.ApiResponse;
-import lombok.extern.slf4j.Slf4j;
+import com.revplay.musicplatform.catalog.exception.DiscoveryNotFoundException;
+import com.revplay.musicplatform.catalog.exception.DiscoveryValidationException;
+import com.revplay.musicplatform.common.response.ApiResponse;
+import com.revplay.musicplatform.common.response.FieldError;
+import com.revplay.musicplatform.playback.exception.PlaybackNotFoundException;
+import com.revplay.musicplatform.playback.exception.PlaybackValidationException;
+import com.revplay.musicplatform.user.exception.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.BindException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-import java.util.stream.Collectors;
+import java.time.LocalDateTime;
+import java.util.List;
 
-@Slf4j
-@RestControllerAdvice
+@ControllerAdvice
 public class GlobalExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(BaseException.class)
-    public ResponseEntity<ApiResponse<Object>> handleBaseException(BaseException ex) {
-
-        log.error("Business exception occurred: {}", ex.getMessage());
-
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.builder()
-                        .success(false)
-                        .message(ex.getMessage())
-                        .data(null)
-                        .build());
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotFound(ResourceNotFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage(), null);
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<Object>> handleValidationException(MethodArgumentNotValidException ex) {
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnauthorized(UnauthorizedException ex) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage(), null);
+    }
 
-        String errors = ex.getBindingResult()
-                .getFieldErrors()
-                .stream()
-                .map(error -> error.getField() + ": " + error.getDefaultMessage())
-                .collect(Collectors.joining(", "));
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBadRequest(BadRequestException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
+    }
 
-        log.warn("Validation failed: {}", errors);
+    @ExceptionHandler({
+            IllegalArgumentException.class,
+            MissingServletRequestPartException.class,
+            MissingServletRequestParameterException.class,
+            HttpMediaTypeNotSupportedException.class,
+            PlaybackValidationException.class,
+            DiscoveryValidationException.class,
+            AuthValidationException.class
+    })
+    public ResponseEntity<ApiResponse<Void>> handleRequestValidation(Exception ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
+    }
 
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.builder()
-                        .success(false)
-                        .message(errors)
-                        .data(null)
-                        .build());
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResource(NoResourceFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler({
+            AccessDeniedException.class,
+            AuthForbiddenException.class
+    })
+    public ResponseEntity<ApiResponse<Void>> handleForbidden(RuntimeException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler({
+            DuplicateResourceException.class,
+            AuthConflictException.class,
+            DataIntegrityViolationException.class
+    })
+    public ResponseEntity<ApiResponse<Void>> handleDuplicate(RuntimeException ex) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler({
+            PlaybackNotFoundException.class,
+            DiscoveryNotFoundException.class,
+            AuthNotFoundException.class
+    })
+    public ResponseEntity<ApiResponse<Void>> handleDomainNotFound(RuntimeException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler(AuthUnauthorizedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAuthUnauthorized(AuthUnauthorizedException ex) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConflict(ConflictException ex) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
+    }
+
+    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
+    public ResponseEntity<ApiResponse<Void>> handleValidation(Exception ex) {
+        List<FieldError> errors;
+        if (ex instanceof MethodArgumentNotValidException manv) {
+            errors = manv.getBindingResult().getFieldErrors().stream()
+                .map(this::toFieldError)
+                .toList();
+        } else if (ex instanceof BindException be) {
+            errors = be.getBindingResult().getFieldErrors().stream()
+                .map(this::toFieldError)
+                .toList();
+        } else {
+            errors = List.of();
+        }
+        return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", errors);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Object>> handleGenericException(Exception ex) {
+    public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex) {
+        log.error("Unhandled error", ex);
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected error", null);
+    }
 
-        log.error("Unexpected error occurred", ex);
+    private FieldError toFieldError(org.springframework.validation.FieldError error) {
+        return FieldError.builder()
+            .field(error.getField())
+            .reason(error.getDefaultMessage())
+            .build();
+    }
 
-        return ResponseEntity
-                .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.builder()
-                        .success(false)
-                        .message("Internal server error")
-                        .data(null)
-                        .build());
+    private ResponseEntity<ApiResponse<Void>> buildResponse(HttpStatus status, String message, List<FieldError> errors) {
+        ApiResponse<Void> response = ApiResponse.<Void>builder()
+            .success(false)
+            .message(message)
+            .errors(errors)
+            .timestamp(LocalDateTime.now())
+            .build();
+        return ResponseEntity.status(status).body(response);
     }
 }

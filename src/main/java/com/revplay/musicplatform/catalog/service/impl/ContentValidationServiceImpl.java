@@ -4,8 +4,6 @@ import com.revplay.musicplatform.catalog.entity.Album;
 import com.revplay.musicplatform.catalog.repository.AlbumRepository;
 import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.catalog.service.ContentValidationService;
-import com.revplay.musicplatform.exception.BadRequestException;
-import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
