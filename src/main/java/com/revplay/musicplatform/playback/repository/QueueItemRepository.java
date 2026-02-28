@@ -16,7 +16,7 @@ public interface QueueItemRepository extends JpaRepository<QueueItem, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             SELECT queueItem
-            FROM QueueItemEntity queueItem
+            FROM QueueItem queueItem
             WHERE queueItem.userId = :userId
             ORDER BY queueItem.position ASC, queueItem.queueId ASC
             """)

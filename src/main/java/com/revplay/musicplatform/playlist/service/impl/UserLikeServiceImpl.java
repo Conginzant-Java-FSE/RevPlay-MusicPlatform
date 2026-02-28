@@ -1,7 +1,7 @@
 package com.revplay.musicplatform.playlist.service.impl;
 
-import com.revplay.musicplatform.audit.entity.AuditActionType;
-import com.revplay.musicplatform.audit.entity.AuditEntityType;
+import com.revplay.musicplatform.audit.enums.AuditActionType;
+import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
 import com.revplay.musicplatform.common.dto.PagedResponseDto;
 import com.revplay.musicplatform.exception.DuplicateResourceException;
@@ -73,7 +73,7 @@ public class UserLikeServiceImpl implements UserLikeService {
                 .orElseThrow(() -> new ResourceNotFoundException("Like", likeId));
 
         if (!like.getUserId().equals(currentUserId)) {
-            throw new com.revplay.exception.AccessDeniedException(
+            throw new com.revplay.musicplatform.exception.AccessDeniedException(
                     "You can only remove your own likes");
         }
 
@@ -98,7 +98,7 @@ public class UserLikeServiceImpl implements UserLikeService {
             Long userId, String likeableType, int page, int size) {
         Long currentUserId = authContextUtil.requireCurrentUserId();
         if (!currentUserId.equals(userId) && !authContextUtil.hasRole(UserRole.ADMIN.name())) {
-            throw new com.revplay.exception.AccessDeniedException(
+            throw new com.revplay.musicplatform.exception.AccessDeniedException(
                     "You can only view your own likes");
         }
 
