@@ -1,0 +1,49 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: revplay
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/revplayfinal_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
+  servlet:
+    multipart:
+      max-file-size: 1GB
+      max-request-size: 1GB
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  security:
+    jwt:
+      secret: 9f8d7a6c5b4e3f2a1d0c9b8a7e6f5d4c1234567890abcdef1234567890abcdef
+      access-token-expiration-seconds: ${JWT_ACCESS_EXPIRY_SECONDS:3600}
+      refresh-token-expiration-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:1209600}
+  audit:
+    internal-api-key: ${INTERNAL_AUDIT_API_KEY:change-me}
+
+revplay:
+  upload:
+    base-dir: ${UPLOAD_BASE_DIR:uploads}
+    songs-dir: ${UPLOAD_SONGS_DIR:songs}
+    podcasts-dir: ${UPLOAD_PODCASTS_DIR:podcasts}
+    images-dir: ${UPLOAD_IMAGES_DIR:images}
+
+logging:
+  level:
+    com.revplay: INFO
