@@ -1,5 +1,5 @@
 server:
-  port: 8081
+  port: 8080
 
 spring:
   application:
@@ -22,16 +22,24 @@ spring:
     multipart:
       max-file-size: 1GB
       max-request-size: 1GB
+
+
+    jackson:
+      serialization:
+      write-dates-as-timestamps: false
+
 springdoc:
   api-docs:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
 
+
+
 app:
   security:
     jwt:
-      secret: ${JWT_SECRET}
+      secret: 9f8d7a6c5b4e3f2a1d0c9b8a7e6f5d4c1234567890abcdef1234567890abcdef
       access-token-expiration-seconds: ${JWT_ACCESS_EXPIRY_SECONDS:3600}
       refresh-token-expiration-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:1209600}
   audit:
