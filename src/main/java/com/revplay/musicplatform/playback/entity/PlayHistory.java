@@ -25,7 +25,7 @@ import java.time.Instant;
 )
 @Getter
 @Setter
-public class PlayHistoryEntity {
+public class PlayHistory {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

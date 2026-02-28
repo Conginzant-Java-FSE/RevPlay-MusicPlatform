@@ -30,7 +30,7 @@ import java.time.Instant;
 )
 @Getter
 @Setter
-public class QueueItemEntity {
+public class QueueItem {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

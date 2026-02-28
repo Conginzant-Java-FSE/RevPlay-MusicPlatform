@@ -9,10 +9,10 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.revplay</groupId>
-    <artifactId>revplay</artifactId>
+    <artifactId>musicplatform</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>revplay</name>
-    <description>revplay</description>
+    <name>musicplatform</name>
+    <description>Revplay Music Platform</description>
     <url/>
     <licenses>
         <license/>
