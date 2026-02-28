@@ -11,7 +11,6 @@ import com.revplay.musicplatform.catalog.dto.request.PodcastEpisodeCreateRequest
 import com.revplay.musicplatform.catalog.dto.request.PodcastEpisodeUpdateRequest;
 import com.revplay.musicplatform.catalog.dto.response.PodcastEpisodeResponse;
 import com.revplay.musicplatform.catalog.service.PodcastEpisodeService;
-import com.revplay.musicplatform.exception.BadRequestException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;

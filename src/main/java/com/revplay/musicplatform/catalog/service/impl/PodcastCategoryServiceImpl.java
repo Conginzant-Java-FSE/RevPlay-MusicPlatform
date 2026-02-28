@@ -4,7 +4,6 @@ package com.revplay.musicplatform.catalog.service.impl;
 
 import java.util.List;
 
-import com.revplay.musicplatform.exception.ConflictException;
 import com.revplay.musicplatform.catalog.dto.request.PodcastCategoryCreateRequest;
 import com.revplay.musicplatform.catalog.dto.response.PodcastCategoryResponse;
 import com.revplay.musicplatform.catalog.entity.PodcastCategory;

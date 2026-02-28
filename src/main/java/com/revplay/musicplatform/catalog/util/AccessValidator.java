@@ -4,7 +4,6 @@ package com.revplay.musicplatform.catalog.util;
 
 import com.revplay.musicplatform.user.enums.UserRole;
 
-import com.revplay.musicplatform.exception.UnauthorizedException;
 import org.springframework.stereotype.Component;
 
 @Component
