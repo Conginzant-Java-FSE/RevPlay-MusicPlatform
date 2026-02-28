@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
 import com.revplay.musicplatform.playback.dto.request.QueueAddRequest;
 import com.revplay.musicplatform.playback.dto.request.QueueReorderRequest;
 import com.revplay.musicplatform.playback.dto.response.QueueItemResponse;
-import com.revplay.musicplatform.playback.entity.QueueItemEntity;
+import com.revplay.musicplatform.playback.entity.QueueItem;
 import com.revplay.musicplatform.playback.exception.PlaybackNotFoundException;
 import com.revplay.musicplatform.playback.exception.PlaybackValidationException;
 import com.revplay.musicplatform.playback.mapper.QueueItemMapper;
@@ -54,14 +54,14 @@ public class QueueServiceImpl implements QueueService {
                 .map(item -> item.getPosition() + 1)
                 .orElse(1);
 
-        QueueItemEntity entity = new QueueItemEntity();
+        QueueItem entity = new QueueItem();
         entity.setUserId(request.userId());
         entity.setSongId(request.songId());
         entity.setEpisodeId(request.episodeId());
         entity.setPosition(nextPosition);
         entity.setCreatedAt(Instant.now());
 
-        QueueItemEntity saved = queueItemRepository.save(entity);
+        QueueItem saved = queueItemRepository.save(entity);
         return queueItemMapper.toDto(saved);
     }
 
@@ -78,7 +78,7 @@ public class QueueServiceImpl implements QueueService {
     @Transactional
     public void removeFromQueue(Long queueId) {
         LOGGER.info("Removing queue item queueId={}", queueId);
-        QueueItemEntity entity = queueItemRepository.findById(queueId)
+        QueueItem entity = queueItemRepository.findById(queueId)
                 .orElseThrow(() -> new PlaybackNotFoundException("Queue item " + queueId + " not found"));
         queueItemRepository.delete(entity);
     }
@@ -91,18 +91,18 @@ public class QueueServiceImpl implements QueueService {
         }
         requireUser(request.userId());
 
-        List<QueueItemEntity> userQueue = queueItemRepository.findByUserIdForUpdate(request.userId());
-        Map<Long, QueueItemEntity> byId = userQueue.stream()
-                .collect(Collectors.toMap(QueueItemEntity::getQueueId, Function.identity()));
+        List<QueueItem> userQueue = queueItemRepository.findByUserIdForUpdate(request.userId());
+        Map<Long, QueueItem> byId = userQueue.stream()
+                .collect(Collectors.toMap(QueueItem::getQueueId, Function.identity()));
 
         Set<Long> inputIds = new HashSet<>(request.queueIdsInOrder());
         if (inputIds.size() != request.queueIdsInOrder().size()) {
             throw new PlaybackValidationException("queueIdsInOrder contains duplicate queue IDs");
         }
 
-        List<QueueItemEntity> ordered = new ArrayList<>();
+        List<QueueItem> ordered = new ArrayList<>();
         for (Long queueId : request.queueIdsInOrder()) {
-            QueueItemEntity item = byId.get(queueId);
+            QueueItem item = byId.get(queueId);
             if (item == null) {
                 throw new PlaybackValidationException("Queue item " + queueId + " does not belong to user " + request.userId());
             }
@@ -110,7 +110,7 @@ public class QueueServiceImpl implements QueueService {
         }
 
         int position = 1;
-        for (QueueItemEntity item : ordered) {
+        for (QueueItem item : ordered) {
             item.setPosition(position++);
         }
         queueItemRepository.saveAll(ordered);

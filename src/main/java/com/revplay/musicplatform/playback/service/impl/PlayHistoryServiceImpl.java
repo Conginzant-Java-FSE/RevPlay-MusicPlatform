@@ -5,7 +5,7 @@ import java.util.List;
 
 import com.revplay.musicplatform.playback.dto.request.TrackPlayRequest;
 import com.revplay.musicplatform.playback.dto.response.PlayHistoryResponse;
-import com.revplay.musicplatform.playback.entity.PlayHistoryEntity;
+import com.revplay.musicplatform.playback.entity.PlayHistory;
 import com.revplay.musicplatform.playback.exception.PlaybackNotFoundException;
 import com.revplay.musicplatform.playback.exception.PlaybackValidationException;
 import com.revplay.musicplatform.playback.mapper.PlayHistoryMapper;
@@ -56,7 +56,7 @@ public class PlayHistoryServiceImpl implements PlayHistoryService {
                 request == null ? null : request.songId(),
                 request == null ? null : request.episodeId());
         validate(request);
-        PlayHistoryEntity entity = new PlayHistoryEntity();
+        PlayHistory entity = new PlayHistory();
         entity.setUserId(request.userId());
         entity.setSongId(request.songId());
         entity.setEpisodeId(request.episodeId());

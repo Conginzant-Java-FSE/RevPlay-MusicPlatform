@@ -1,15 +1,15 @@
 package com.revplay.musicplatform.playback.repository;
 
-import com.revplay.musicplatform.playback.entity.PlayHistoryEntity;
+import com.revplay.musicplatform.playback.entity.PlayHistory;
 import java.util.List;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface PlayHistoryRepository extends JpaRepository<PlayHistoryEntity, Long> {
+public interface PlayHistoryRepository extends JpaRepository<PlayHistory, Long> {
 
-    List<PlayHistoryEntity> findByUserIdOrderByPlayedAtDescPlayIdDesc(Long userId);
+    List<PlayHistory> findByUserIdOrderByPlayedAtDescPlayIdDesc(Long userId);
 
-    List<PlayHistoryEntity> findByUserIdOrderByPlayedAtDescPlayIdDesc(Long userId, Pageable pageable);
+    List<PlayHistory> findByUserIdOrderByPlayedAtDescPlayIdDesc(Long userId, Pageable pageable);
 
     long deleteByUserId(Long userId);
 }
