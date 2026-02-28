@@ -5,9 +5,9 @@ spring:
   application:
     name: revplay
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/revplayfinal_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
-    username: root
-    password: 123456
+    url: ${DB_URL:jdbc:mysql://localhost:3306/revplaymusic_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -31,7 +31,7 @@ springdoc:
 app:
   security:
     jwt:
-      secret: 9f8d7a6c5b4e3f2a1d0c9b8a7e6f5d4c1234567890abcdef1234567890abcdef
+      secret: ${JWT_SECRET}
       access-token-expiration-seconds: ${JWT_ACCESS_EXPIRY_SECONDS:3600}
       refresh-token-expiration-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:1209600}
   audit:
