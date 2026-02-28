@@ -1,5 +1,7 @@
 package com.revplay.musicplatform.artist.service.impl;
 
+import com.revplay.musicplatform.exception.ConflictException;
+import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import com.revplay.musicplatform.user.enums.UserRole;
 
 import com.revplay.musicplatform.artist.dto.request.ArtistCreateRequest;

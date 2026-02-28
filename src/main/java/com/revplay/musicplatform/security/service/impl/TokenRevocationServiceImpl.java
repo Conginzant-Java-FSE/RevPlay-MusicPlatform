@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class TokenRevocationServiceImpl implements TokenRevocationService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(TokenRevocationService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(TokenRevocationServiceImpl.class);
 
     private final Map<String, Instant> revokedTokensByExpiry = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> issuedTokensByUser = new ConcurrentHashMap<>();

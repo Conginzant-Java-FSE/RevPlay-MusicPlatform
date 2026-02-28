@@ -1,6 +1,7 @@
 package com.revplay.musicplatform.catalog.util;
 
 import com.mpatric.mp3agic.Mp3File;
+import com.revplay.musicplatform.exception.BadRequestException;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

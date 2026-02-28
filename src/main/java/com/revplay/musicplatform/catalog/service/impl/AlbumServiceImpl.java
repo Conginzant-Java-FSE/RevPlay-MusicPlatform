@@ -14,6 +14,8 @@ import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.catalog.service.AlbumService;
 import com.revplay.musicplatform.catalog.util.AccessValidator;
 import com.revplay.musicplatform.catalog.util.SecurityUtil;
+import com.revplay.musicplatform.exception.BadRequestException;
+import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import com.revplay.musicplatform.user.enums.UserRole;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
