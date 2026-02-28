@@ -1,7 +1,7 @@
 package com.revplay.musicplatform.playlist.service.impl;
 
-import com.revplay.musicplatform.audit.entity.AuditActionType;
-import com.revplay.musicplatform.audit.entity.AuditEntityType;
+import com.revplay.musicplatform.audit.enums.AuditActionType;
+import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
 import com.revplay.musicplatform.common.dto.PagedResponseDto;
 import com.revplay.musicplatform.exception.AccessDeniedException;
@@ -214,7 +214,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         enforceOwnership(playlist, userId);
 
         validateReorderRequest(playlistId, request);
-        for (SongPositionDto entry : request.getSongs()) {
+        for (SongPositionRequest entry : request.getSongs()) {
             PlaylistSong ps = playlistSongRepository
                     .findByPlaylistIdAndSongId(playlistId, entry.getSongId())
                     .orElseThrow(() -> new ResourceNotFoundException(
@@ -342,7 +342,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         Set<Integer> seenPositions = new HashSet<>();
         int expectedCount = currentSongs.size();
 
-        for (SongPositionDto entry : request.getSongs()) {
+        for (SongPositionRequest entry : request.getSongs()) {
             if (!currentSongIds.contains(entry.getSongId())) {
                 throw new ResourceNotFoundException(
                         "Song " + entry.getSongId() + " not found in playlist " + playlistId);
