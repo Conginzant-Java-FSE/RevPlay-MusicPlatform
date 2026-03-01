@@ -1,5 +1,5 @@
 server:
-  port: 8081
+  port: 8080
 
 spring:
   application:
@@ -22,11 +22,19 @@ spring:
     multipart:
       max-file-size: 1GB
       max-request-size: 1GB
+
+
+    jackson:
+      serialization:
+      write-dates-as-timestamps: false
+
 springdoc:
   api-docs:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+
 
 app:
   security:

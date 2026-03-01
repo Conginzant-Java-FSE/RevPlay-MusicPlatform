@@ -1,6 +1,5 @@
 package com.revplay.musicplatform.user.service.impl;
 
-
 import com.revplay.musicplatform.security.JwtProperties;
 import com.revplay.musicplatform.user.service.AuthService;
 import com.revplay.musicplatform.user.dto.request.ChangePasswordRequest;
