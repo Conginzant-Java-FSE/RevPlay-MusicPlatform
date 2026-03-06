@@ -1,6 +1,8 @@
 package com.revplay.musicplatform.artist.service.impl;
 
 
+import com.revplay.musicplatform.exception.ConflictException;
+import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import com.revplay.musicplatform.user.enums.UserRole;
 
 import java.util.List;
@@ -98,7 +100,7 @@ public class ArtistSocialLinkServiceImpl implements ArtistSocialLinkService {
         }
     }
 
-    private void validateUniquePlatform(Long artistId, com.revplay.catalog.enums.SocialPlatform platform, Long linkId) {
+    private void validateUniquePlatform(Long artistId, com.revplay.musicplatform.catalog.enums.SocialPlatform platform, Long linkId) {
         boolean exists = linkId == null
                 ? repository.existsByArtistIdAndPlatform(artistId, platform)
                 : repository.existsByArtistIdAndPlatformAndLinkIdNot(artistId, platform, linkId);

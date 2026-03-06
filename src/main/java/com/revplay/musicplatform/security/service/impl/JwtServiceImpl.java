@@ -1,11 +1,8 @@
 package com.revplay.musicplatform.security.service.impl;
-
-
-
 import com.revplay.musicplatform.security.service.JwtService;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.security.JwtProperties;
-import com.revplay.musicplatform.user.entity.UserEntity;
+import com.revplay.musicplatform.user.entity.User;
 import com.revplay.musicplatform.user.enums.UserRole;
 import com.revplay.musicplatform.user.exception.AuthUnauthorizedException;
 import io.jsonwebtoken.Claims;
@@ -24,7 +21,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class JwtServiceImpl implements JwtService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(JwtService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JwtServiceImpl.class);
 
     private static final String ROLE_CLAIM = "role";
     private static final String TOKEN_TYPE_CLAIM = "token_type";
@@ -37,11 +34,11 @@ public class JwtServiceImpl implements JwtService {
         this.jwtProperties = jwtProperties;
     }
 
-    public String generateAccessToken(UserEntity user) {
+    public String generateAccessToken(User user) {
         return generateToken(user, TOKEN_TYPE_ACCESS, jwtProperties.getAccessTokenExpirationSeconds());
     }
 
-    public String generateRefreshToken(UserEntity user) {
+    public String generateRefreshToken(User user) {
         return generateToken(user, TOKEN_TYPE_REFRESH, jwtProperties.getRefreshTokenExpirationSeconds());
     }
 
@@ -85,7 +82,7 @@ public class JwtServiceImpl implements JwtService {
         return expiration == null ? null : expiration.toInstant();
     }
 
-    private String generateToken(UserEntity user, String tokenType, long expirySeconds) {
+    private String generateToken(User user, String tokenType, long expirySeconds) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .subject(String.valueOf(user.getUserId()))

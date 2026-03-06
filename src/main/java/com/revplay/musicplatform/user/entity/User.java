@@ -1,6 +1,6 @@
 package com.revplay.musicplatform.user.entity;
 
-import com.revplay.user.enums.UserRole;
+import com.revplay.musicplatform.user.enums.UserRole;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;

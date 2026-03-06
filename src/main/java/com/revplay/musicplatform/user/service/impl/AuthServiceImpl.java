@@ -1,6 +1,6 @@
 package com.revplay.musicplatform.user.service.impl;
 
-
+import com.revplay.musicplatform.security.JwtProperties;
 import com.revplay.musicplatform.user.service.AuthService;
 import com.revplay.musicplatform.user.dto.request.ChangePasswordRequest;
 import com.revplay.musicplatform.user.dto.request.ForgotPasswordRequest;
@@ -23,8 +23,8 @@ import com.revplay.musicplatform.user.exception.AuthValidationException;
 import com.revplay.musicplatform.user.repository.PasswordResetTokenRepository;
 import com.revplay.musicplatform.user.repository.UserProfileRepository;
 import com.revplay.musicplatform.user.repository.UserRepository;
-import com.revplay.musicplatform.audit.entity.AuditActionType;
-import com.revplay.musicplatform.audit.entity.AuditEntityType;
+import com.revplay.musicplatform.audit.enums.AuditActionType;
+import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.security.service.InMemoryRateLimiterService;

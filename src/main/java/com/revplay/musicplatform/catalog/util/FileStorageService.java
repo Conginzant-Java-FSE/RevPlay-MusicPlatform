@@ -1,6 +1,8 @@
 package com.revplay.musicplatform.catalog.util;
 
 import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.exception.BadRequestException;
+import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
