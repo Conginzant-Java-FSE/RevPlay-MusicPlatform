@@ -3,6 +3,7 @@ package com.revplay.musicplatform.user.service.impl;
 
 import com.revplay.musicplatform.security.JwtProperties;
 import com.revplay.musicplatform.user.service.AuthService;
+import com.revplay.musicplatform.user.service.EmailService;
 import com.revplay.musicplatform.user.dto.request.ChangePasswordRequest;
 import com.revplay.musicplatform.user.dto.request.ForgotPasswordRequest;
 import com.revplay.musicplatform.user.dto.request.LoginRequest;
@@ -10,7 +11,6 @@ import com.revplay.musicplatform.user.dto.request.RefreshTokenRequest;
 import com.revplay.musicplatform.user.dto.request.RegisterRequest;
 import com.revplay.musicplatform.user.dto.request.ResetPasswordRequest;
 import com.revplay.musicplatform.user.dto.response.AuthTokenResponse;
-import com.revplay.musicplatform.user.dto.response.ForgotPasswordResponse;
 import com.revplay.musicplatform.user.dto.response.SimpleMessageResponse;
 import com.revplay.musicplatform.user.dto.response.UserResponse;
 import com.revplay.musicplatform.user.entity.PasswordResetToken;
@@ -24,6 +24,7 @@ import com.revplay.musicplatform.user.exception.AuthValidationException;
 import com.revplay.musicplatform.user.repository.PasswordResetTokenRepository;
 import com.revplay.musicplatform.user.repository.UserProfileRepository;
 import com.revplay.musicplatform.user.repository.UserRepository;
+import com.revplay.musicplatform.user.util.OtpGeneratorUtil;
 import com.revplay.musicplatform.audit.enums.AuditActionType;
 import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
@@ -32,7 +33,7 @@ import com.revplay.musicplatform.security.service.InMemoryRateLimiterService;
 import com.revplay.musicplatform.security.service.JwtService;
 import com.revplay.musicplatform.security.service.TokenRevocationService;
 import java.time.Instant;
-import java.util.Base64;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -45,6 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthServiceImpl implements AuthService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
+    private static final long PASSWORD_RESET_TOKEN_EXPIRY_SECONDS = 30 * 60;
 
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
@@ -55,6 +57,7 @@ public class AuthServiceImpl implements AuthService {
     private final TokenRevocationService tokenRevocationService;
     private final InMemoryRateLimiterService inMemoryRateLimiterService;
     private final AuditLogService auditLogService;
+    private final EmailService emailService;
 
     public AuthServiceImpl(
             UserRepository userRepository,
@@ -65,7 +68,8 @@ public class AuthServiceImpl implements AuthService {
             JwtProperties jwtProperties,
             TokenRevocationService tokenRevocationService,
             InMemoryRateLimiterService inMemoryRateLimiterService,
-            AuditLogService auditLogService
+            AuditLogService auditLogService,
+            EmailService emailService
     ) {
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
@@ -76,6 +80,7 @@ public class AuthServiceImpl implements AuthService {
         this.tokenRevocationService = tokenRevocationService;
         this.inMemoryRateLimiterService = inMemoryRateLimiterService;
         this.auditLogService = auditLogService;
+        this.emailService = emailService;
     }
 
     @Transactional
@@ -96,6 +101,7 @@ public class AuthServiceImpl implements AuthService {
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setRole(resolveRequestedRole(request.role()));
         user.setIsActive(Boolean.TRUE);
+        user.setEmailVerified(Boolean.FALSE);
         user.setCreatedAt(Instant.now());
         user.setUpdatedAt(Instant.now());
         User savedUser = userRepository.save(user);
@@ -110,6 +116,41 @@ public class AuthServiceImpl implements AuthService {
         profile.setUpdatedAt(Instant.now());
         userProfileRepository.save(profile);
 
+        String otp = OtpGeneratorUtil.generateOtp();
+        savedUser.setEmailOtp(otp);
+        savedUser.setOtpExpiryTime(LocalDateTime.now().plusMinutes(5));
+        savedUser.setEmailVerified(Boolean.FALSE);
+        userRepository.save(savedUser);
+
+        try {
+            emailService.sendEmail(
+                    savedUser.getEmail(),
+                    "Verify your RevPlay account",
+                    """
+                    Hi %s,
+
+                    Thanks for signing up for RevPlay.
+
+                    To activate your account, please verify your email using the code below.
+
+                    Verification Code
+
+                    %s
+
+                    Important information:
+
+                    - This code expires in 5 minutes
+                    - Enter the code on the verification screen to complete your registration
+
+                    Once verified, you can start listening on RevPlay.
+
+                    RevPlay
+                    """.formatted(resolveDisplayName(savedUser), otp)
+            );
+        } catch (Exception ex) {
+            LOGGER.error("OTP email send failed for userId={}, email={}", savedUser.getUserId(), savedUser.getEmail(), ex);
+        }
+
         return buildTokenResponse(savedUser);
     }
 
@@ -123,6 +164,9 @@ public class AuthServiceImpl implements AuthService {
         );
         User user = resolveUserByUsernameOrEmail(request.usernameOrEmail())
                 .orElseThrow(() -> new AuthUnauthorizedException("Invalid credentials"));
+        if (!Boolean.TRUE.equals(user.getEmailVerified())) {
+            throw new AuthUnauthorizedException("Please verify your email before logging in.");
+        }
         if (!Boolean.TRUE.equals(user.getIsActive())) {
             throw new AuthUnauthorizedException("Account is deactivated");
         }
@@ -160,7 +204,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Transactional
-    public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request, String clientKey) {
+    public SimpleMessageResponse forgotPassword(ForgotPasswordRequest request, String clientKey) {
         LOGGER.info("Processing forgot-password for email={}", request == null ? null : request.email());
         inMemoryRateLimiterService.ensureWithinLimit(
                 "forgot-password:" + normalizeClientKey(clientKey),
@@ -171,21 +215,20 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findByEmailIgnoreCase(request.email())
                 .orElseThrow(() -> new AuthNotFoundException("User not found for the given email"));
 
-        passwordResetTokenRepository.deleteByExpiresAtBeforeOrUsedAtIsNotNull(Instant.now());
+        passwordResetTokenRepository.deleteByExpiryDateBefore(Instant.now());
+        passwordResetTokenRepository.deleteByUser(user);
 
         PasswordResetToken tokenEntity = new PasswordResetToken();
-        tokenEntity.setUserId(user.getUserId());
-        tokenEntity.setToken(generateResetToken());
+        tokenEntity.setUser(user);
+        tokenEntity.setToken(UUID.randomUUID().toString());
+        tokenEntity.setExpiryDate(Instant.now().plusSeconds(PASSWORD_RESET_TOKEN_EXPIRY_SECONDS));
         tokenEntity.setCreatedAt(Instant.now());
-        tokenEntity.setExpiresAt(Instant.now().plusSeconds(3600));
-        tokenEntity.setUsedAt(null);
         PasswordResetToken savedToken = passwordResetTokenRepository.save(tokenEntity);
 
-        return new ForgotPasswordResponse(
-                "Password reset token generated",
-                savedToken.getToken(),
-                savedToken.getExpiresAt()
-        );
+        String resetLink = "http://localhost:4200/reset-password?token=" + savedToken.getToken();
+        sendPasswordResetEmail(user.getEmail(), resetLink);
+
+        return new SimpleMessageResponse("Password reset email sent successfully");
     }
 
     @Transactional
@@ -193,19 +236,18 @@ public class AuthServiceImpl implements AuthService {
         LOGGER.info("Processing password reset by token");
         PasswordResetToken tokenEntity = passwordResetTokenRepository.findByToken(request.token())
                 .orElseThrow(() -> new AuthValidationException("Invalid reset token"));
-        if (tokenEntity.getUsedAt() != null || tokenEntity.getExpiresAt().isBefore(Instant.now())) {
-            throw new AuthValidationException("Reset token is expired or already used");
+        if (tokenEntity.getExpiryDate().isBefore(Instant.now())) {
+            passwordResetTokenRepository.delete(tokenEntity);
+            throw new AuthValidationException("Reset token is expired");
         }
 
-        User user = userRepository.findById(tokenEntity.getUserId())
-                .orElseThrow(() -> new AuthNotFoundException("User not found"));
+        User user = tokenEntity.getUser();
 
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 
-        tokenEntity.setUsedAt(Instant.now());
-        passwordResetTokenRepository.save(tokenEntity);
+        passwordResetTokenRepository.delete(tokenEntity);
 
         auditLogService.logInternal(
                 AuditActionType.PASSWORD_RESET,
@@ -240,6 +282,83 @@ public class AuthServiceImpl implements AuthService {
         );
 
         return new SimpleMessageResponse("Password changed successfully");
+    }
+
+    @Transactional
+    public SimpleMessageResponse verifyEmailOtp(String email, String otp) {
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new AuthNotFoundException("User not found for the given email"));
+
+        if (Boolean.TRUE.equals(user.getEmailVerified())) {
+            return new SimpleMessageResponse("Email already verified");
+        }
+        if (user.getEmailOtp() == null || !user.getEmailOtp().equals(otp)) {
+            throw new AuthValidationException("Invalid OTP");
+        }
+        if (user.getOtpExpiryTime() == null || user.getOtpExpiryTime().isBefore(LocalDateTime.now())) {
+            throw new AuthValidationException("OTP expired");
+        }
+
+        user.setEmailVerified(Boolean.TRUE);
+        user.setEmailOtp(null);
+        user.setOtpExpiryTime(null);
+        user.setUpdatedAt(Instant.now());
+        userRepository.save(user);
+
+        try {
+            emailService.sendWelcomeEmail(user.getEmail(), resolveDisplayName(user));
+        } catch (Exception ex) {
+            LOGGER.error("Welcome email send failed after verification for userId={}, email={}", user.getUserId(), user.getEmail(), ex);
+        }
+
+        return new SimpleMessageResponse("Email verified successfully");
+    }
+
+    @Transactional
+    public SimpleMessageResponse resendEmailOtp(String email) {
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new AuthNotFoundException("User not found for the given email"));
+
+        if (Boolean.TRUE.equals(user.getEmailVerified())) {
+            return new SimpleMessageResponse("Email already verified");
+        }
+
+        String otp = OtpGeneratorUtil.generateOtp();
+        user.setEmailOtp(otp);
+        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(5));
+        user.setUpdatedAt(Instant.now());
+        userRepository.save(user);
+
+        try {
+            emailService.sendEmail(
+                    user.getEmail(),
+                    "Verify your RevPlay account",
+                    """
+                    Hi %s,
+
+                    Thanks for signing up for RevPlay.
+
+                    To activate your account, please verify your email using the code below.
+
+                    Verification Code
+
+                    %s
+
+                    Important information:
+
+                    - This code expires in 5 minutes
+                    - Enter the code on the verification screen to complete your registration
+
+                    Once verified, you can start listening on RevPlay.
+
+                    RevPlay
+                    """.formatted(resolveDisplayName(user), otp)
+            );
+        } catch (Exception ex) {
+            LOGGER.error("OTP resend email failed for userId={}, email={}", user.getUserId(), user.getEmail(), ex);
+        }
+
+        return new SimpleMessageResponse("OTP sent successfully");
     }
 
     private AuthTokenResponse buildTokenResponse(User user) {
@@ -288,9 +407,44 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
-    private String generateResetToken() {
-        String seed = UUID.randomUUID() + ":" + Instant.now();
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(seed.getBytes());
+    private void sendPasswordResetEmail(String toEmail, String resetLink) {
+        try {
+            emailService.sendEmail(
+                    toEmail,
+                    "Reset your RevPlay password",
+                    """
+                    Hi,
+
+                    We received a request to reset your RevPlay password.
+
+                    Use the secure link below to create a new password.
+
+                    Reset your password
+
+                    %s
+
+                    For your security:
+
+                    - This link expires in 15 minutes
+                    - The link can only be used once
+                    - If you did not request a reset, you can ignore this email
+
+                    RevPlay Security
+                    """.formatted(resetLink)
+            );
+        } catch (Exception ex) {
+            LOGGER.error("Password reset email send failed for recipient={}", toEmail, ex);
+        }
+    }
+
+    private String resolveDisplayName(User user) {
+        if (user == null) {
+            return "User";
+        }
+        if (user.getUsername() != null && !user.getUsername().isBlank()) {
+            return user.getUsername().trim();
+        }
+        return "User";
     }
 
     private String normalizeClientKey(String clientKey) {
