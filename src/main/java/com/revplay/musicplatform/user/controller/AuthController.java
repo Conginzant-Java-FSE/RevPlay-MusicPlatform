@@ -7,7 +7,6 @@ import com.revplay.musicplatform.user.dto.request.RefreshTokenRequest;
 import com.revplay.musicplatform.user.dto.request.RegisterRequest;
 import com.revplay.musicplatform.user.dto.request.ResetPasswordRequest;
 import com.revplay.musicplatform.user.dto.response.AuthTokenResponse;
-import com.revplay.musicplatform.user.dto.response.ForgotPasswordResponse;
 import com.revplay.musicplatform.user.dto.response.SimpleMessageResponse;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.user.service.AuthService;
@@ -62,7 +61,7 @@ public class AuthController {
     }
 
     @PostMapping("/forgot-password")
-    public ResponseEntity<ForgotPasswordResponse> forgotPassword(
+    public ResponseEntity<SimpleMessageResponse> forgotPassword(
             @Valid @RequestBody ForgotPasswordRequest request,
             HttpServletRequest httpServletRequest
     ) {

@@ -12,4 +12,5 @@ public class FileStorageProperties {
     private String songsDir;
     private String podcastsDir;
     private String imagesDir;
+    private String adsDir;
 }

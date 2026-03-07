@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(
@@ -45,6 +46,15 @@ public class User {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    @Column(name = "email_verified", nullable = false)
+    private Boolean emailVerified = Boolean.FALSE;
+
+    @Column(name = "email_otp", length = 20)
+    private String emailOtp;
+
+    @Column(name = "otp_expiry_time")
+    private LocalDateTime otpExpiryTime;
 
     @Version
     @Column(name = "version")
