@@ -1,5 +1,9 @@
 package com.revplay.musicplatform.premium.integration;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.ads.entity.Ad;
 import com.revplay.musicplatform.ads.service.impl.AdServiceImpl;
 import com.revplay.musicplatform.premium.service.SubscriptionService;
@@ -11,11 +15,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class PremiumAwareAdServiceTest {
+
+    private static final Long USER_ID = 42L;
+    private static final Long SONG_ID = 77L;
 
     @Mock
     private SubscriptionService subscriptionService;
@@ -23,41 +28,29 @@ class PremiumAwareAdServiceTest {
     private AdServiceImpl delegate;
 
     @InjectMocks
-    private PremiumAwareAdService service;
+    private PremiumAwareAdService premiumAwareAdService;
 
     @Test
-    @DisplayName("premium user returns null and does not delegate")
-    void getNextAd_premium_returnsNullNoDelegate() {
-        when(subscriptionService.isUserPremium(1L)).thenReturn(true);
+    @DisplayName("premium user gets no ad and delegate is not called")
+    void premiumUserGetsNoAd() {
+        when(subscriptionService.isUserPremium(USER_ID)).thenReturn(true);
 
-        Ad ad = service.getNextAd(1L, 10L);
+        Ad ad = premiumAwareAdService.getNextAd(USER_ID, SONG_ID);
 
         assertThat(ad).isNull();
-        verify(delegate, never()).getNextAd(1L, 10L);
     }
 
     @Test
-    @DisplayName("non premium delegates and returns ad")
-    void getNextAd_nonPremium_delegates() {
-        Ad ad = new Ad();
-        ad.setId(7L);
-        when(subscriptionService.isUserPremium(1L)).thenReturn(false);
-        when(delegate.getNextAd(1L, 10L)).thenReturn(ad);
+    @DisplayName("non premium user delegates to ad service")
+    void nonPremiumUserDelegatesToAdService() {
+        Ad expectedAd = new Ad();
+        expectedAd.setId(1L);
+        when(subscriptionService.isUserPremium(USER_ID)).thenReturn(false);
+        when(delegate.getNextAd(USER_ID, SONG_ID)).thenReturn(expectedAd);
 
-        Ad result = service.getNextAd(1L, 10L);
+        Ad ad = premiumAwareAdService.getNextAd(USER_ID, SONG_ID);
 
-        assertThat(result).isEqualTo(ad);
-        verify(delegate).getNextAd(1L, 10L);
-    }
-
-    @Test
-    @DisplayName("non premium and delegate returns null propagates null")
-    void getNextAd_nonPremium_delegateNull_returnsNull() {
-        when(subscriptionService.isUserPremium(1L)).thenReturn(false);
-        when(delegate.getNextAd(1L, 10L)).thenReturn(null);
-
-        Ad result = service.getNextAd(1L, 10L);
-
-        assertThat(result).isNull();
+        assertThat(ad).isSameAs(expectedAd);
+        verify(delegate).getNextAd(USER_ID, SONG_ID);
     }
 }

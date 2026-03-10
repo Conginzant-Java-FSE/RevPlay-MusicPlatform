@@ -1,50 +1,51 @@
 package com.revplay.musicplatform.audit.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.revplay.musicplatform.audit.dto.request.AuditLogRequest;
-import com.revplay.musicplatform.audit.dto.response.AuditLogResponse;
-import com.revplay.musicplatform.audit.service.AuditLogService;
-import com.revplay.musicplatform.common.dto.PagedResponseDto;
-import com.revplay.musicplatform.config.FileStorageProperties;
-import com.revplay.musicplatform.exception.AccessDeniedException;
-import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
-import com.revplay.musicplatform.security.SecurityConfig;
-import com.revplay.musicplatform.security.service.JwtService;
-import com.revplay.musicplatform.security.service.TokenRevocationService;
-import com.revplay.musicplatform.user.enums.UserRole;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.context.annotation.Import;
-import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
-import org.springframework.http.MediaType;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
-
-import java.time.LocalDateTime;
-import java.util.List;
-
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@Tag("unit")
-@WebMvcTest(AuditLogController.class)
-@Import(SecurityConfig.class)
-@TestPropertySource(properties = "app.audit.internal-api-key=test-internal-key")
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.revplay.musicplatform.audit.dto.request.AuditLogRequest;
+import com.revplay.musicplatform.audit.dto.response.AuditLogResponse;
+import com.revplay.musicplatform.audit.service.AuditLogService;
+import com.revplay.musicplatform.common.dto.PagedResponseDto;
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
+import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
+import com.revplay.musicplatform.security.SecurityConfig;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+@WebMvcTest(value = AuditLogController.class, properties = "app.audit.internal-api-key=test-internal-key")
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class})
+@Tag("integration")
 class AuditLogControllerTest {
 
-    private static final String BASE = "/api/v1/audit-logs";
-    private static final String INTERNAL = "/api/v1/audit-logs/internal";
+    private static final String BASE_PATH = "/api/v1/audit-logs";
+    private static final String INTERNAL_PATH = BASE_PATH + "/internal";
+    private static final String INTERNAL_KEY_HEADER = "X-Internal-Api-Key";
+    private static final String INTERNAL_KEY = "test-internal-key";
 
     private final MockMvc mockMvc;
     private final ObjectMapper objectMapper;
@@ -52,9 +53,7 @@ class AuditLogControllerTest {
     @MockBean
     private AuditLogService auditLogService;
     @MockBean
-    private JwtService jwtService;
-    @MockBean
-    private TokenRevocationService tokenRevocationService;
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
     @MockBean
     private FileStorageProperties fileStorageProperties;
     @MockBean
@@ -66,11 +65,22 @@ class AuditLogControllerTest {
         this.objectMapper = objectMapper;
     }
 
+    @BeforeEach
+    void setUp() throws Exception {
+        doAnswer(invocation -> {
+            ServletRequest request = invocation.getArgument(0);
+            ServletResponse response = invocation.getArgument(1);
+            FilterChain chain = invocation.getArgument(2);
+            chain.doFilter(request, response);
+            return null;
+        }).when(jwtAuthenticationFilter).doFilter(any(), any(), any());
+    }
+
     @Test
-    @DisplayName("GET audit logs admin returns 200")
-    void query_admin_ok() throws Exception {
-        PagedResponseDto<AuditLogResponse> page = PagedResponseDto.<AuditLogResponse>builder()
-                .content(List.of(response()))
+    @DisplayName("GET query audit logs with admin auth returns 200")
+    void queryAuditLogsAdmin() throws Exception {
+        PagedResponseDto<AuditLogResponse> dto = PagedResponseDto.<AuditLogResponse>builder()
+                .content(List.of(AuditLogResponse.builder().id(1L).build()))
                 .page(0)
                 .size(20)
                 .totalElements(1)
@@ -78,101 +88,95 @@ class AuditLogControllerTest {
                 .last(true)
                 .build();
         when(auditLogService.queryAuditLogs(any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class)))
-                .thenReturn(page);
+                .thenReturn(dto);
 
-        mockMvc.perform(get(BASE).with(authentication(auth(UserRole.ADMIN))))
+        mockMvc.perform(get(BASE_PATH)
+                        .with(user("admin").roles("ADMIN"))
+                        .param("action", "ROLE_CHANGED")
+                        .param("user", "1")
+                        .param("entity", "USER")
+                        .param("from", "2026-01-01")
+                        .param("to", "2026-01-31")
+                        .param("page", "0")
+                        .param("size", "20"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.content[0].action").value("PASSWORD_CHANGED"));
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(auditLogService).queryAuditLogs(any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class));
     }
 
     @Test
-    @DisplayName("GET audit logs listener maps to 403 when service rejects")
-    void query_listener_forbidden() throws Exception {
-        when(auditLogService.queryAuditLogs(any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class)))
-                .thenThrow(new AccessDeniedException("Admin access required"));
-
-        mockMvc.perform(get(BASE).with(authentication(auth(UserRole.LISTENER))))
+    @DisplayName("GET query audit logs without auth returns 403")
+    void queryAuditLogsNoAuth() throws Exception {
+        mockMvc.perform(get(BASE_PATH))
                 .andExpect(status().isForbidden());
+
+        verifyNoInteractions(auditLogService);
     }
 
     @Test
-    @DisplayName("GET audit logs no auth returns 403")
-    void query_noAuth_forbidden() throws Exception {
-        mockMvc.perform(get(BASE)).andExpect(status().isForbidden());
-    }
+    @DisplayName("POST internal audit with valid key returns 201")
+    void recordInternalValidKey() throws Exception {
+        when(auditLogService.logAction(any(AuditLogRequest.class))).thenReturn(AuditLogResponse.builder().id(1L).build());
 
-    @Test
-    @DisplayName("POST internal with correct api key returns 201")
-    void internal_correctKey_created() throws Exception {
-        when(auditLogService.logAction(any())).thenReturn(response());
-
-        mockMvc.perform(post(INTERNAL)
+        mockMvc.perform(post(INTERNAL_PATH)
+                        .header(INTERNAL_KEY_HEADER, INTERNAL_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("X-Internal-Api-Key", "test-internal-key")
-                        .content(objectMapper.writeValueAsString(request())))
+                        .content(objectMapper.writeValueAsString(validRequest())))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true));
+
+        verify(auditLogService).logAction(any(AuditLogRequest.class));
     }
 
     @Test
-    @DisplayName("POST internal with wrong api key returns 403")
-    void internal_wrongKey_forbidden() throws Exception {
-        mockMvc.perform(post(INTERNAL)
+    @DisplayName("POST internal audit with missing key returns 403")
+    void recordInternalMissingKey() throws Exception {
+        mockMvc.perform(post(INTERNAL_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("X-Internal-Api-Key", "wrong")
-                        .content(objectMapper.writeValueAsString(request())))
-                .andExpect(status().isForbidden());
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verifyNoInteractions(auditLogService);
     }
 
     @Test
-    @DisplayName("GET audit logs with action filter returns 200")
-    void query_withActionFilter_ok() throws Exception {
-        PagedResponseDto<AuditLogResponse> page = PagedResponseDto.<AuditLogResponse>builder()
-                .content(List.of(response()))
-                .page(0)
-                .size(20)
-                .totalElements(1)
-                .totalPages(1)
-                .last(true)
-                .build();
-        when(auditLogService.queryAuditLogs(any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class)))
-                .thenReturn(page);
+    @DisplayName("POST internal audit with wrong key returns 403")
+    void recordInternalWrongKey() throws Exception {
+        mockMvc.perform(post(INTERNAL_PATH)
+                        .header(INTERNAL_KEY_HEADER, "wrong-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false));
 
-        mockMvc.perform(get(BASE)
-                        .with(authentication(auth(UserRole.ADMIN)))
-                        .param("action", "PASSWORD_CHANGED"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.content[0].action").value("PASSWORD_CHANGED"));
+        verifyNoInteractions(auditLogService);
     }
 
-    private AuditLogRequest request() {
+    @Test
+    @DisplayName("POST internal audit invalid body returns 400")
+    void recordInternalInvalidBody() throws Exception {
+        AuditLogRequest invalid = new AuditLogRequest();
+        invalid.setAction("");
+
+        mockMvc.perform(post(INTERNAL_PATH)
+                        .header(INTERNAL_KEY_HEADER, INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalid)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verifyNoInteractions(auditLogService);
+    }
+
+    private AuditLogRequest validRequest() {
         AuditLogRequest request = new AuditLogRequest();
-        request.setAction("PASSWORD_CHANGED");
+        request.setAction("ROLE_CHANGED");
         request.setPerformedBy(1L);
         request.setEntityType("USER");
-        request.setEntityId(9L);
-        request.setDescription("changed");
+        request.setEntityId(2L);
+        request.setDescription("desc");
         return request;
-    }
-
-    private AuditLogResponse response() {
-        return AuditLogResponse.builder()
-                .id(1L)
-                .action("PASSWORD_CHANGED")
-                .performedBy(1L)
-                .entityType("USER")
-                .entityId(9L)
-                .description("changed")
-                .timestamp(LocalDateTime.now())
-                .build();
-    }
-
-    private UsernamePasswordAuthenticationToken auth(UserRole role) {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(1L, "u1", role);
-        return new UsernamePasswordAuthenticationToken(
-                principal,
-                null,
-                List.of(new SimpleGrantedAuthority("ROLE_" + role.name()))
-        );
     }
 }

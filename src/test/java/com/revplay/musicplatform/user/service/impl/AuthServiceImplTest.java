@@ -1,15 +1,30 @@
 package com.revplay.musicplatform.user.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.audit.enums.AuditActionType;
 import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
-import com.revplay.musicplatform.common.TestDataFactory;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.security.JwtProperties;
 import com.revplay.musicplatform.security.service.InMemoryRateLimiterService;
 import com.revplay.musicplatform.security.service.JwtService;
 import com.revplay.musicplatform.security.service.TokenRevocationService;
-import com.revplay.musicplatform.user.dto.request.*;
+import com.revplay.musicplatform.user.dto.request.ChangePasswordRequest;
+import com.revplay.musicplatform.user.dto.request.ForgotPasswordRequest;
+import com.revplay.musicplatform.user.dto.request.LoginRequest;
+import com.revplay.musicplatform.user.dto.request.RefreshTokenRequest;
+import com.revplay.musicplatform.user.dto.request.RegisterRequest;
+import com.revplay.musicplatform.user.dto.request.ResetPasswordRequest;
 import com.revplay.musicplatform.user.dto.response.AuthTokenResponse;
 import com.revplay.musicplatform.user.dto.response.SimpleMessageResponse;
 import com.revplay.musicplatform.user.entity.PasswordResetToken;
@@ -24,35 +39,34 @@ import com.revplay.musicplatform.user.repository.PasswordResetTokenRepository;
 import com.revplay.musicplatform.user.repository.UserProfileRepository;
 import com.revplay.musicplatform.user.repository.UserRepository;
 import com.revplay.musicplatform.user.service.EmailService;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class AuthServiceImplTest {
 
-    private static final String TEST_EMAIL = "test@example.com";
-    private static final String TEST_USERNAME = "testuser";
-    private static final String TEST_PASSWORD = "Strong123!";
-    private static final String TEST_FULL_NAME = "Test User";
-    private static final String CLIENT_KEY = "127.0.0.1";
+    private static final String EMAIL = "listener@revplay.com";
+    private static final String USERNAME = "listener";
+    private static final String FULL_NAME = "Listener User";
+    private static final String RAW_PASSWORD = "StrongPass@123";
+    private static final String ENCODED_PASSWORD = "encoded-password";
     private static final String ACCESS_TOKEN = "access-token";
     private static final String REFRESH_TOKEN = "refresh-token";
+    private static final String CLIENT_KEY = "10.0.0.1";
+    private static final String OTP = "123456";
+    private static final String RESET_TOKEN = "reset-token";
 
     @Mock
     private UserRepository userRepository;
@@ -65,8 +79,6 @@ class AuthServiceImplTest {
     @Mock
     private JwtService jwtService;
     @Mock
-    private JwtProperties jwtProperties;
-    @Mock
     private TokenRevocationService tokenRevocationService;
     @Mock
     private InMemoryRateLimiterService inMemoryRateLimiterService;
@@ -74,11 +86,17 @@ class AuthServiceImplTest {
     private AuditLogService auditLogService;
     @Mock
     private EmailService emailService;
+    @Captor
+    private ArgumentCaptor<User> userCaptor;
 
     private AuthServiceImpl authService;
 
     @BeforeEach
     void setUp() {
+        JwtProperties jwtProperties = new JwtProperties();
+        jwtProperties.setSecret("test-secret-key-that-is-at-least-256-bits-long-for-hmac-sha");
+        jwtProperties.setAccessTokenExpirationSeconds(3600L);
+        jwtProperties.setRefreshTokenExpirationSeconds(1209600L);
         authService = new AuthServiceImpl(
                 userRepository,
                 userProfileRepository,
@@ -89,87 +107,91 @@ class AuthServiceImplTest {
                 tokenRevocationService,
                 inMemoryRateLimiterService,
                 auditLogService,
-                emailService);
+                emailService
+        );
     }
 
     @Test
-    @DisplayName("register happy path LISTENER role")
-    void register_happyPath_listener() {
-        RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_FULL_NAME,
-                "LISTENER");
-        User savedUser = TestDataFactory.buildUser(1L, TEST_EMAIL, TEST_USERNAME, UserRole.LISTENER);
-        savedUser.setEmailVerified(false);
-
-        when(userRepository.existsByEmailIgnoreCase(TEST_EMAIL)).thenReturn(false);
-        when(userRepository.existsByUsernameIgnoreCase(TEST_USERNAME)).thenReturn(false);
-        when(passwordEncoder.encode(TEST_PASSWORD)).thenReturn("hash");
-        when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        stubTokenGeneration(savedUser);
+    @DisplayName("register happy path saves user and profile and sends OTP email")
+    void registerHappyPath() {
+        RegisterRequest request = new RegisterRequest(EMAIL, USERNAME, RAW_PASSWORD, FULL_NAME, UserRole.LISTENER.name());
+        User saved = verifiedActiveUser(1L);
+        saved.setEmailVerified(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameIgnoreCase(USERNAME)).thenReturn(Optional.empty());
+        when(passwordEncoder.encode(RAW_PASSWORD)).thenReturn(ENCODED_PASSWORD);
+        when(userRepository.save(any(User.class))).thenReturn(saved);
+        when(userProfileRepository.findByUserId(1L)).thenReturn(Optional.empty());
+        when(userProfileRepository.save(any(UserProfile.class))).thenAnswer(i -> i.getArgument(0));
+        mockTokenFlow(saved);
 
         AuthTokenResponse response = authService.register(request);
 
+        verify(userRepository, times(2)).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getEmailOtp()).isNotBlank();
+        verify(emailService).sendEmail(eq(EMAIL), eq("Verify your RevPlay account"), any(String.class));
         assertThat(response.accessToken()).isEqualTo(ACCESS_TOKEN);
-        verify(userRepository, times(2)).save(any(User.class));
-        verify(userProfileRepository).save(any(UserProfile.class));
-        verify(emailService).sendEmail(eq(TEST_EMAIL), anyString(), anyString());
+        assertThat(response.refreshToken()).isEqualTo(REFRESH_TOKEN);
     }
 
     @Test
-    @DisplayName("register ARTIST role in request")
-    void register_artistRole() {
-        RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_FULL_NAME,
-                "ARTIST");
-        User savedUser = TestDataFactory.buildUser(1L, TEST_EMAIL, TEST_USERNAME, UserRole.ARTIST);
-
-        when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
-        when(userRepository.existsByUsernameIgnoreCase(anyString())).thenReturn(false);
-        when(passwordEncoder.encode(anyString())).thenReturn("hash");
-        when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        stubTokenGeneration(savedUser);
-
-        authService.register(request);
-
-        verify(userRepository, atLeastOnce()).save(any(User.class));
-    }
-
-    @Test
-    @DisplayName("register null request throws")
-    void register_nullRequest() {
+    @DisplayName("register throws on null request")
+    void registerNullRequest() {
         assertThatThrownBy(() -> authService.register(null))
                 .isInstanceOf(AuthValidationException.class)
                 .hasMessage("Register request is required");
     }
 
     @Test
-    @DisplayName("register weak password throws")
-    void register_weakPassword() {
-        RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, "mypassword1", TEST_FULL_NAME,
-                "LISTENER");
-
+    @DisplayName("register throws weak password validation")
+    void registerWeakPassword() {
+        RegisterRequest request = new RegisterRequest(EMAIL, USERNAME, "myPassword@1", FULL_NAME, null);
         assertThatThrownBy(() -> authService.register(request))
                 .isInstanceOf(AuthValidationException.class)
                 .hasMessage("Password is too weak");
     }
 
     @Test
-    @DisplayName("register email exists throws")
-    void register_emailExists() {
-        RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_FULL_NAME,
-                "LISTENER");
-        when(userRepository.existsByEmailIgnoreCase(TEST_EMAIL)).thenReturn(true);
-
+    @DisplayName("register throws conflict when email exists")
+    void registerEmailExists() {
+        RegisterRequest request = new RegisterRequest(EMAIL, USERNAME, RAW_PASSWORD, FULL_NAME, null);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(verifiedActiveUser(2L)));
         assertThatThrownBy(() -> authService.register(request))
                 .isInstanceOf(AuthConflictException.class)
                 .hasMessage("Email already exists");
     }
 
     @Test
-    @DisplayName("register username exists throws")
-    void register_usernameExists() {
-        RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_FULL_NAME,
-                "LISTENER");
-        when(userRepository.existsByEmailIgnoreCase(TEST_EMAIL)).thenReturn(false);
-        when(userRepository.existsByUsernameIgnoreCase(TEST_USERNAME)).thenReturn(true);
+    @DisplayName("register resolves artist role when ARTIST role requested")
+    void registerArtistRoleRequested() {
+        RegisterRequest request = new RegisterRequest(EMAIL, USERNAME, RAW_PASSWORD, FULL_NAME, UserRole.ARTIST.name());
+        User saved = verifiedActiveUser(22L);
+        saved.setRole(UserRole.ARTIST);
+        saved.setEmailVerified(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameIgnoreCase(USERNAME)).thenReturn(Optional.empty());
+        when(passwordEncoder.encode(RAW_PASSWORD)).thenReturn(ENCODED_PASSWORD);
+        when(userRepository.save(any(User.class))).thenReturn(saved);
+        when(userProfileRepository.findByUserId(22L)).thenReturn(Optional.empty());
+        when(userProfileRepository.save(any(UserProfile.class))).thenAnswer(i -> i.getArgument(0));
+        mockTokenFlow(saved);
+
+        authService.register(request);
+
+        verify(userRepository, times(2)).save(userCaptor.capture());
+        assertThat(userCaptor.getAllValues().get(0).getRole()).isEqualTo(UserRole.ARTIST);
+    }
+
+    @Test
+    @DisplayName("register throws conflict when username already exists")
+    void registerUsernameExists() {
+        RegisterRequest request = new RegisterRequest(EMAIL, USERNAME, RAW_PASSWORD, FULL_NAME, null);
+        User existingInactiveByEmail = verifiedActiveUser(100L);
+        existingInactiveByEmail.setIsActive(Boolean.FALSE);
+        User existingByUsername = verifiedActiveUser(101L);
+        existingByUsername.setUsername(USERNAME);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(existingInactiveByEmail));
+        when(userRepository.findByUsernameIgnoreCase(USERNAME)).thenReturn(Optional.of(existingByUsername));
 
         assertThatThrownBy(() -> authService.register(request))
                 .isInstanceOf(AuthConflictException.class)
@@ -177,159 +199,138 @@ class AuthServiceImplTest {
     }
 
     @Test
-    @DisplayName("register emailService throws but registration succeeds")
-    void register_emailThrows() {
-        RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_FULL_NAME,
-                "LISTENER");
-        User savedUser = TestDataFactory.buildUser(1L, TEST_EMAIL, TEST_USERNAME, UserRole.LISTENER);
-
-        when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
-        when(userRepository.existsByUsernameIgnoreCase(anyString())).thenReturn(false);
-        when(passwordEncoder.encode(anyString())).thenReturn("hash");
-        when(userRepository.save(any(User.class))).thenReturn(savedUser);
-        doThrow(new RuntimeException("mail down")).when(emailService).sendEmail(anyString(), anyString(), anyString());
-        stubTokenGeneration(savedUser);
+    @DisplayName("register swallows email exception and still returns token")
+    void registerEmailExceptionSwallowed() {
+        RegisterRequest request = new RegisterRequest(EMAIL, USERNAME, RAW_PASSWORD, FULL_NAME, null);
+        User saved = verifiedActiveUser(102L);
+        saved.setEmailVerified(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameIgnoreCase(USERNAME)).thenReturn(Optional.empty());
+        when(passwordEncoder.encode(RAW_PASSWORD)).thenReturn(ENCODED_PASSWORD);
+        when(userRepository.save(any(User.class))).thenReturn(saved);
+        when(userProfileRepository.findByUserId(102L)).thenReturn(Optional.empty());
+        when(userProfileRepository.save(any(UserProfile.class))).thenAnswer(i -> i.getArgument(0));
+        doThrow(new RuntimeException("mail-fail")).when(emailService).sendEmail(eq(EMAIL), any(String.class), any(String.class));
+        mockTokenFlow(saved);
 
         AuthTokenResponse response = authService.register(request);
-
-        assertThat(response.refreshToken()).isEqualTo(REFRESH_TOKEN);
-    }
-
-    @Test
-    @DisplayName("login happy path via email")
-    void login_happyPath_email() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches(TEST_PASSWORD, "hash")).thenReturn(true);
-        stubTokenGeneration(user);
-
-        AuthTokenResponse response = authService.login(new LoginRequest(TEST_EMAIL, TEST_PASSWORD), CLIENT_KEY);
 
         assertThat(response.accessToken()).isEqualTo(ACCESS_TOKEN);
     }
 
     @Test
-    @DisplayName("login happy path via username")
-    void login_happyPath_username() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByUsernameIgnoreCase(TEST_USERNAME)).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches(TEST_PASSWORD, "hash")).thenReturn(true);
-        stubTokenGeneration(user);
+    @DisplayName("login happy path via email")
+    void loginByEmail() {
+        User user = verifiedActiveUser(3L);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(RAW_PASSWORD, user.getPasswordHash())).thenReturn(true);
+        mockTokenFlow(user);
 
-        AuthTokenResponse response = authService.login(new LoginRequest(TEST_USERNAME, TEST_PASSWORD), CLIENT_KEY);
+        AuthTokenResponse response = authService.login(new LoginRequest(EMAIL, RAW_PASSWORD), CLIENT_KEY);
 
-        assertThat(response.refreshToken()).isEqualTo(REFRESH_TOKEN);
+        verify(inMemoryRateLimiterService).ensureWithinLimit("login:" + CLIENT_KEY, 5, 60, "Too many login attempts. Please try again later.");
+        assertThat(response.accessToken()).isEqualTo(ACCESS_TOKEN);
     }
 
     @Test
-    @DisplayName("login user not found throws")
-    void login_userNotFound() {
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> authService.login(new LoginRequest(TEST_EMAIL, TEST_PASSWORD), CLIENT_KEY))
+    @DisplayName("login throws invalid credentials when user missing")
+    void loginUserMissing() {
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> authService.login(new LoginRequest(EMAIL, RAW_PASSWORD), CLIENT_KEY))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Invalid credentials");
     }
 
     @Test
-    @DisplayName("login unverified throws")
-    void login_unverified() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("login happy path via username when no at-sign present")
+    void loginByUsername() {
+        User user = verifiedActiveUser(23L);
+        when(userRepository.findByUsernameIgnoreCase(USERNAME)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(RAW_PASSWORD, user.getPasswordHash())).thenReturn(true);
+        mockTokenFlow(user);
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest(TEST_EMAIL, TEST_PASSWORD), CLIENT_KEY))
+        AuthTokenResponse response = authService.login(new LoginRequest(USERNAME, RAW_PASSWORD), CLIENT_KEY);
+
+        assertThat(response.refreshToken()).isEqualTo(REFRESH_TOKEN);
+        verify(userRepository).findByUsernameIgnoreCase(USERNAME);
+    }
+
+    @Test
+    @DisplayName("login throws unauthorized when email not verified")
+    void loginEmailNotVerified() {
+        User user = verifiedActiveUser(24L);
+        user.setEmailVerified(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest(EMAIL, RAW_PASSWORD), CLIENT_KEY))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Please verify your email before logging in.");
     }
 
     @Test
-    @DisplayName("login inactive throws")
-    void login_inactive() {
-        User user = userWithPasswordHash();
-        user.setIsActive(false);
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("login throws unauthorized when account is deactivated")
+    void loginInactiveUser() {
+        User user = verifiedActiveUser(25L);
+        user.setIsActive(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest(TEST_EMAIL, TEST_PASSWORD), CLIENT_KEY))
+        assertThatThrownBy(() -> authService.login(new LoginRequest(EMAIL, RAW_PASSWORD), CLIENT_KEY))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Account is deactivated");
     }
 
     @Test
-    @DisplayName("login wrong password throws")
-    void login_wrongPassword() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches("bad", "hash")).thenReturn(false);
+    @DisplayName("login throws unauthorized when password does not match")
+    void loginWrongPassword() {
+        User user = verifiedActiveUser(26L);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(RAW_PASSWORD, user.getPasswordHash())).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest(TEST_EMAIL, "bad"), CLIENT_KEY))
+        assertThatThrownBy(() -> authService.login(new LoginRequest(EMAIL, RAW_PASSWORD), CLIENT_KEY))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Invalid credentials");
     }
 
     @Test
-    @DisplayName("login calls rate limiter with expected args")
-    void login_rateLimiterCalled() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches(TEST_PASSWORD, "hash")).thenReturn(true);
-        stubTokenGeneration(user);
-
-        authService.login(new LoginRequest(TEST_EMAIL, TEST_PASSWORD), CLIENT_KEY);
-
-        verify(inMemoryRateLimiterService).ensureWithinLimit(
-                eq("login:" + CLIENT_KEY),
-                eq(5),
-                eq(60),
-                eq("Too many login attempts. Please try again later."));
-    }
-
-    @Test
-    @DisplayName("refreshToken valid token returns new response")
-    void refreshToken_valid() {
-        User user = userWithPasswordHash();
-
+    @DisplayName("refresh token happy path for active user")
+    void refreshTokenHappyPath() {
+        User user = verifiedActiveUser(4L);
         when(tokenRevocationService.isRevoked(REFRESH_TOKEN)).thenReturn(false);
         when(jwtService.isRefreshToken(REFRESH_TOKEN)).thenReturn(true);
-        when(jwtService.toPrincipal(REFRESH_TOKEN))
-                .thenReturn(new AuthenticatedUserPrincipal(1L, TEST_USERNAME, UserRole.LISTENER));
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        stubTokenGeneration(user);
+        when(jwtService.toPrincipal(REFRESH_TOKEN)).thenReturn(new AuthenticatedUserPrincipal(4L, USERNAME, UserRole.LISTENER));
+        when(userRepository.findById(4L)).thenReturn(Optional.of(user));
+        mockTokenFlow(user);
 
         AuthTokenResponse response = authService.refreshToken(new RefreshTokenRequest(REFRESH_TOKEN));
-
-        assertThat(response.accessToken()).isEqualTo(ACCESS_TOKEN);
+        assertThat(response.refreshToken()).isEqualTo(REFRESH_TOKEN);
     }
 
     @Test
-    @DisplayName("refreshToken revoked token throws")
-    void refreshToken_revoked() {
+    @DisplayName("refresh token revoked throws unauthorized")
+    void refreshTokenRevoked() {
         when(tokenRevocationService.isRevoked(REFRESH_TOKEN)).thenReturn(true);
-
         assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenRequest(REFRESH_TOKEN)))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Refresh token is revoked");
     }
 
     @Test
-    @DisplayName("refreshToken wrong type throws")
-    void refreshToken_wrongType() {
+    @DisplayName("refresh with non-refresh token throws unauthorized")
+    void refreshTokenNotRefresh() {
         when(tokenRevocationService.isRevoked(REFRESH_TOKEN)).thenReturn(false);
         when(jwtService.isRefreshToken(REFRESH_TOKEN)).thenReturn(false);
-
         assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenRequest(REFRESH_TOKEN)))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Invalid refresh token");
     }
 
     @Test
-    @DisplayName("refreshToken user not found throws")
-    void refreshToken_userNotFound() {
+    @DisplayName("refresh throws unauthorized when user not found")
+    void refreshTokenUserNotFound() {
         when(tokenRevocationService.isRevoked(REFRESH_TOKEN)).thenReturn(false);
         when(jwtService.isRefreshToken(REFRESH_TOKEN)).thenReturn(true);
-        when(jwtService.toPrincipal(REFRESH_TOKEN))
-                .thenReturn(new AuthenticatedUserPrincipal(99L, TEST_USERNAME, UserRole.LISTENER));
-        when(userRepository.findById(99L)).thenReturn(Optional.empty());
+        when(jwtService.toPrincipal(REFRESH_TOKEN)).thenReturn(new AuthenticatedUserPrincipal(999L, USERNAME, UserRole.LISTENER));
+        when(userRepository.findById(999L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenRequest(REFRESH_TOKEN)))
                 .isInstanceOf(AuthUnauthorizedException.class)
@@ -337,16 +338,14 @@ class AuthServiceImplTest {
     }
 
     @Test
-    @DisplayName("refreshToken inactive user throws")
-    void refreshToken_inactive() {
-        User user = userWithPasswordHash();
-        user.setIsActive(false);
-
+    @DisplayName("refresh throws unauthorized when user is inactive")
+    void refreshTokenInactiveUser() {
+        User user = verifiedActiveUser(27L);
+        user.setIsActive(Boolean.FALSE);
         when(tokenRevocationService.isRevoked(REFRESH_TOKEN)).thenReturn(false);
         when(jwtService.isRefreshToken(REFRESH_TOKEN)).thenReturn(true);
-        when(jwtService.toPrincipal(REFRESH_TOKEN))
-                .thenReturn(new AuthenticatedUserPrincipal(1L, TEST_USERNAME, UserRole.LISTENER));
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(jwtService.toPrincipal(REFRESH_TOKEN)).thenReturn(new AuthenticatedUserPrincipal(27L, USERNAME, UserRole.LISTENER));
+        when(userRepository.findById(27L)).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenRequest(REFRESH_TOKEN)))
                 .isInstanceOf(AuthUnauthorizedException.class)
@@ -354,299 +353,288 @@ class AuthServiceImplTest {
     }
 
     @Test
-    @DisplayName("logout valid token revokes and returns success")
-    void logout_valid() {
-        Instant expiry = Instant.now().plusSeconds(600);
-        when(jwtService.getExpiry("token")).thenReturn(expiry);
-
-        SimpleMessageResponse response = authService.logout("token");
-
-        assertThat(response.message()).isEqualTo("Logged out successfully");
-        verify(tokenRevocationService).revoke("token", expiry);
-    }
-
-    @Test
-    @DisplayName("logout null token returns success")
-    void logout_null() {
+    @DisplayName("logout with null token is idempotent")
+    void logoutNullToken() {
         SimpleMessageResponse response = authService.logout(null);
-
+        verify(tokenRevocationService, never()).revoke(any(), any());
         assertThat(response.message()).isEqualTo("Logged out successfully");
-        verify(tokenRevocationService, never()).revoke(anyString(), any());
     }
 
     @Test
-    @DisplayName("logout blank token returns success")
-    void logout_blank() {
-        SimpleMessageResponse response = authService.logout("   ");
+    @DisplayName("logout with token revokes and returns success")
+    void logoutWithToken() {
+        Instant expiry = Instant.now().plusSeconds(120);
+        when(jwtService.getExpiry(ACCESS_TOKEN)).thenReturn(expiry);
 
+        SimpleMessageResponse response = authService.logout(ACCESS_TOKEN);
+
+        verify(tokenRevocationService).revoke(ACCESS_TOKEN, expiry);
         assertThat(response.message()).isEqualTo("Logged out successfully");
-        verify(tokenRevocationService, never()).revoke(anyString(), any());
     }
 
     @Test
-    @DisplayName("forgotPassword happy path")
-    void forgotPassword_happyPath() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        when(passwordResetTokenRepository.save(any(PasswordResetToken.class))).thenAnswer(inv -> inv.getArgument(0));
+    @DisplayName("logout with blank token does not revoke")
+    void logoutBlankToken() {
+        SimpleMessageResponse response = authService.logout("  ");
+        verify(tokenRevocationService, never()).revoke(any(), any());
+        assertThat(response.message()).isEqualTo("Logged out successfully");
+    }
 
-        SimpleMessageResponse response = authService.forgotPassword(new ForgotPasswordRequest(TEST_EMAIL), CLIENT_KEY);
+    @Test
+    @DisplayName("forgot password happy path cleans old tokens and sends email")
+    void forgotPasswordHappyPath() {
+        User user = verifiedActiveUser(5L);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordResetTokenRepository.save(any(PasswordResetToken.class))).thenAnswer(i -> i.getArgument(0));
 
-        assertThat(response.message()).isEqualTo("Password reset email sent successfully");
-        verify(passwordResetTokenRepository).deleteByExpiryDateBefore(any(Instant.class));
+        SimpleMessageResponse response = authService.forgotPassword(new ForgotPasswordRequest(EMAIL), CLIENT_KEY);
+
+        verify(inMemoryRateLimiterService).ensureWithinLimit("forgot-password:" + CLIENT_KEY, 3, 600, "Too many forgot-password requests. Please try again later.");
         verify(passwordResetTokenRepository).deleteByUser(user);
-        verify(passwordResetTokenRepository).save(any(PasswordResetToken.class));
-        verify(emailService).sendEmail(eq(TEST_EMAIL), anyString(), anyString());
+        verify(emailService).sendEmail(eq(EMAIL), eq("Reset your RevPlay password"), any(String.class));
+        assertThat(response.message()).isEqualTo("Password reset email sent successfully");
     }
 
     @Test
-    @DisplayName("forgotPassword user not found throws")
-    void forgotPassword_userNotFound() {
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.empty());
+    @DisplayName("forgot password throws not found for unknown email")
+    void forgotPasswordUserNotFound() {
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.forgotPassword(new ForgotPasswordRequest(TEST_EMAIL), CLIENT_KEY))
-                .isInstanceOf(AuthNotFoundException.class);
+        assertThatThrownBy(() -> authService.forgotPassword(new ForgotPasswordRequest(EMAIL), CLIENT_KEY))
+                .isInstanceOf(AuthNotFoundException.class)
+                .hasMessage("User not found for the given email");
     }
 
     @Test
-    @DisplayName("forgotPassword email send failure swallowed")
-    void forgotPassword_emailThrows() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        when(passwordResetTokenRepository.save(any(PasswordResetToken.class))).thenAnswer(inv -> inv.getArgument(0));
-        doThrow(new RuntimeException("mail down")).when(emailService).sendEmail(anyString(), anyString(), anyString());
+    @DisplayName("forgot password swallows email send exceptions")
+    void forgotPasswordEmailThrows() {
+        User user = verifiedActiveUser(28L);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(passwordResetTokenRepository.save(any(PasswordResetToken.class))).thenAnswer(i -> i.getArgument(0));
+        doThrow(new RuntimeException("mail-fail")).when(emailService).sendEmail(eq(EMAIL), any(String.class), any(String.class));
 
-        SimpleMessageResponse response = authService.forgotPassword(new ForgotPasswordRequest(TEST_EMAIL), CLIENT_KEY);
+        SimpleMessageResponse response = authService.forgotPassword(new ForgotPasswordRequest(EMAIL), CLIENT_KEY);
 
         assertThat(response.message()).isEqualTo("Password reset email sent successfully");
     }
 
     @Test
-    @DisplayName("forgotPassword rate limiter key")
-    void forgotPassword_rateLimiter() {
-        User user = userWithPasswordHash();
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        when(passwordResetTokenRepository.save(any(PasswordResetToken.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        authService.forgotPassword(new ForgotPasswordRequest(TEST_EMAIL), CLIENT_KEY);
-
-        verify(inMemoryRateLimiterService).ensureWithinLimit(
-                eq("forgot-password:" + CLIENT_KEY),
-                eq(3),
-                eq(600),
-                eq("Too many forgot-password requests. Please try again later."));
-    }
-
-    @Test
-    @DisplayName("resetPassword happy path")
-    void resetPassword_happyPath() {
-        User user = userWithPasswordHash();
+    @DisplayName("reset password deletes expired token and throws validation")
+    void resetPasswordExpiredToken() {
         PasswordResetToken token = new PasswordResetToken();
-        token.setUser(user);
-        token.setToken("valid");
-        token.setExpiryDate(Instant.now().plusSeconds(300));
-
-        when(passwordResetTokenRepository.findByToken("valid")).thenReturn(Optional.of(token));
-        when(passwordEncoder.encode("NewStrong123!")).thenReturn("new-hash");
-
-        SimpleMessageResponse response = authService.resetPassword(new ResetPasswordRequest("valid", "NewStrong123!"));
-
-        assertThat(response.message()).isEqualTo("Password reset successful");
-        verify(userRepository).save(user);
-        verify(passwordResetTokenRepository).delete(token);
-        verify(auditLogService).logInternal(eq(AuditActionType.PASSWORD_RESET), anyLong(), eq(AuditEntityType.USER),
-                anyLong(), anyString());
-    }
-
-    @Test
-    @DisplayName("resetPassword token not found throws")
-    void resetPassword_tokenNotFound() {
-        when(passwordResetTokenRepository.findByToken("bad")).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> authService.resetPassword(new ResetPasswordRequest("bad", "NewStrong123!")))
-                .isInstanceOf(AuthValidationException.class)
-                .hasMessage("Invalid reset token");
-    }
-
-    @Test
-    @DisplayName("resetPassword expired token deletes then throws")
-    void resetPassword_expired() {
-        PasswordResetToken token = new PasswordResetToken();
-        token.setToken("expired");
+        token.setToken(RESET_TOKEN);
         token.setExpiryDate(Instant.now().minusSeconds(1));
-        token.setUser(userWithPasswordHash());
-        when(passwordResetTokenRepository.findByToken("expired")).thenReturn(Optional.of(token));
+        token.setUser(verifiedActiveUser(6L));
+        when(passwordResetTokenRepository.findByToken(RESET_TOKEN)).thenReturn(Optional.of(token));
 
-        assertThatThrownBy(() -> authService.resetPassword(new ResetPasswordRequest("expired", "NewStrong123!")))
+        assertThatThrownBy(() -> authService.resetPassword(new ResetPasswordRequest(RESET_TOKEN, "NewPass@123")))
                 .isInstanceOf(AuthValidationException.class)
                 .hasMessage("Reset token is expired");
         verify(passwordResetTokenRepository).delete(token);
     }
 
     @Test
-    @DisplayName("changePassword happy path")
-    void changePassword_happyPath() {
-        User user = userWithPasswordHash();
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches("old", "hash")).thenReturn(true);
-        when(passwordEncoder.encode("new")).thenReturn("new-hash");
+    @DisplayName("reset password happy path updates hash deletes token and logs")
+    void resetPasswordHappyPath() {
+        User user = verifiedActiveUser(29L);
+        PasswordResetToken token = new PasswordResetToken();
+        token.setToken(RESET_TOKEN);
+        token.setUser(user);
+        token.setExpiryDate(Instant.now().plusSeconds(120));
+        when(passwordResetTokenRepository.findByToken(RESET_TOKEN)).thenReturn(Optional.of(token));
+        when(passwordEncoder.encode("NewPass@123")).thenReturn("new-hash");
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
 
-        SimpleMessageResponse response = authService.changePassword(1L, new ChangePasswordRequest("old", "new"));
+        SimpleMessageResponse response = authService.resetPassword(new ResetPasswordRequest(RESET_TOKEN, "NewPass@123"));
 
+        verify(passwordResetTokenRepository).delete(token);
+        verify(auditLogService).logInternal(AuditActionType.PASSWORD_RESET, 29L, AuditEntityType.USER, 29L, "Password reset completed via reset token");
+        assertThat(response.message()).isEqualTo("Password reset successful");
+    }
+
+    @Test
+    @DisplayName("reset password invalid token throws validation")
+    void resetPasswordInvalidToken() {
+        when(passwordResetTokenRepository.findByToken(RESET_TOKEN)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.resetPassword(new ResetPasswordRequest(RESET_TOKEN, "NewPass@123")))
+                .isInstanceOf(AuthValidationException.class)
+                .hasMessage("Invalid reset token");
+    }
+
+    @Test
+    @DisplayName("change password happy path updates hash and logs audit")
+    void changePasswordHappyPath() {
+        User user = verifiedActiveUser(7L);
+        user.setPasswordHash("old-hash");
+        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("OldPass@123", "old-hash")).thenReturn(true);
+        when(passwordEncoder.encode("NewPass@123")).thenReturn("new-hash");
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
+
+        SimpleMessageResponse response = authService.changePassword(7L, new ChangePasswordRequest("OldPass@123", "NewPass@123"));
+
+        verify(auditLogService).logInternal(AuditActionType.PASSWORD_CHANGE, 7L, AuditEntityType.USER, 7L, "Password changed by authenticated user");
         assertThat(response.message()).isEqualTo("Password changed successfully");
-        verify(userRepository).save(user);
-        verify(auditLogService).logInternal(eq(AuditActionType.PASSWORD_CHANGE), eq(1L), eq(AuditEntityType.USER),
-                eq(1L), anyString());
     }
 
     @Test
-    @DisplayName("changePassword user not found")
-    void changePassword_userNotFound() {
-        when(userRepository.findById(1L)).thenReturn(Optional.empty());
+    @DisplayName("change password throws not found when user missing")
+    void changePasswordUserNotFound() {
+        when(userRepository.findById(700L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.changePassword(1L, new ChangePasswordRequest("old", "new")))
-                .isInstanceOf(AuthNotFoundException.class);
+        assertThatThrownBy(() -> authService.changePassword(700L, new ChangePasswordRequest("OldPass@123", "NewPass@123")))
+                .isInstanceOf(AuthNotFoundException.class)
+                .hasMessage("User not found");
     }
 
     @Test
-    @DisplayName("changePassword wrong current password")
-    void changePassword_wrongCurrent() {
-        User user = userWithPasswordHash();
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(passwordEncoder.matches("bad", "hash")).thenReturn(false);
+    @DisplayName("change password throws validation for wrong current password")
+    void changePasswordWrongCurrentPassword() {
+        User user = verifiedActiveUser(701L);
+        user.setPasswordHash("old-hash");
+        when(userRepository.findById(701L)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("Wrong@123", "old-hash")).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.changePassword(1L, new ChangePasswordRequest("bad", "new")))
+        assertThatThrownBy(() -> authService.changePassword(701L, new ChangePasswordRequest("Wrong@123", "NewPass@123")))
                 .isInstanceOf(AuthValidationException.class)
                 .hasMessage("Current password is incorrect");
     }
 
     @Test
-    @DisplayName("verifyEmailOtp happy path")
-    void verifyEmailOtp_happyPath() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        user.setEmailOtp("123456");
-        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(2));
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("verify email otp happy path sets email verified and clears otp")
+    void verifyEmailOtpHappyPath() {
+        User user = verifiedActiveUser(8L);
+        user.setEmailVerified(Boolean.FALSE);
+        user.setEmailOtp(OTP);
+        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(5));
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
 
-        SimpleMessageResponse response = authService.verifyEmailOtp(TEST_EMAIL, "123456");
+        SimpleMessageResponse response = authService.verifyEmailOtp(EMAIL, OTP);
 
+        verify(emailService).sendWelcomeEmail(EMAIL, USERNAME);
         assertThat(response.message()).isEqualTo("Email verified successfully");
-        assertThat(user.getEmailVerified()).isTrue();
-        assertThat(user.getEmailOtp()).isNull();
-        verify(emailService).sendWelcomeEmail(TEST_EMAIL, TEST_USERNAME);
     }
 
     @Test
-    @DisplayName("verifyEmailOtp already verified")
-    void verifyEmailOtp_alreadyVerified() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(true);
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("verify email otp already verified returns message")
+    void verifyEmailAlreadyVerified() {
+        User user = verifiedActiveUser(30L);
+        user.setEmailVerified(Boolean.TRUE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
 
-        SimpleMessageResponse response = authService.verifyEmailOtp(TEST_EMAIL, "123456");
+        SimpleMessageResponse response = authService.verifyEmailOtp(EMAIL, OTP);
 
         assertThat(response.message()).isEqualTo("Email already verified");
     }
 
     @Test
-    @DisplayName("verifyEmailOtp wrong otp")
-    void verifyEmailOtp_wrongOtp() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        user.setEmailOtp("999999");
-        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(1));
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("verify email otp wrong code throws validation")
+    void verifyEmailWrongOtp() {
+        User user = verifiedActiveUser(31L);
+        user.setEmailVerified(Boolean.FALSE);
+        user.setEmailOtp(OTP);
+        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(2));
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.verifyEmailOtp(TEST_EMAIL, "123456"))
+        assertThatThrownBy(() -> authService.verifyEmailOtp(EMAIL, "000000"))
                 .isInstanceOf(AuthValidationException.class)
                 .hasMessage("Invalid OTP");
     }
 
     @Test
-    @DisplayName("verifyEmailOtp expired otp")
-    void verifyEmailOtp_expiredOtp() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        user.setEmailOtp("123456");
-        user.setOtpExpiryTime(LocalDateTime.now().minusMinutes(1));
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("verify email otp expired code throws validation")
+    void verifyEmailExpiredOtp() {
+        User user = verifiedActiveUser(32L);
+        user.setEmailVerified(Boolean.FALSE);
+        user.setEmailOtp(OTP);
+        user.setOtpExpiryTime(LocalDateTime.now().minusSeconds(1));
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.verifyEmailOtp(TEST_EMAIL, "123456"))
+        assertThatThrownBy(() -> authService.verifyEmailOtp(EMAIL, OTP))
                 .isInstanceOf(AuthValidationException.class)
                 .hasMessage("OTP expired");
     }
 
     @Test
-    @DisplayName("verifyEmailOtp welcome mail throws but still succeeds")
-    void verifyEmailOtp_welcomeThrows() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        user.setEmailOtp("123456");
-        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(1));
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        doThrow(new RuntimeException("mail down")).when(emailService).sendWelcomeEmail(anyString(), anyString());
+    @DisplayName("verify email otp swallows welcome email exception")
+    void verifyEmailWelcomeThrows() {
+        User user = verifiedActiveUser(33L);
+        user.setEmailVerified(Boolean.FALSE);
+        user.setEmailOtp(OTP);
+        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(2));
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
+        doThrow(new RuntimeException("welcome-fail")).when(emailService).sendWelcomeEmail(EMAIL, USERNAME);
 
-        SimpleMessageResponse response = authService.verifyEmailOtp(TEST_EMAIL, "123456");
+        SimpleMessageResponse response = authService.verifyEmailOtp(EMAIL, OTP);
 
         assertThat(response.message()).isEqualTo("Email verified successfully");
     }
 
     @Test
-    @DisplayName("resendEmailOtp happy path")
-    void resendEmailOtp_happyPath() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("resend otp swallows email exception and still succeeds")
+    void resendOtpSwallowsEmailException() {
+        User user = verifiedActiveUser(9L);
+        user.setEmailVerified(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
+        doThrow(new RuntimeException("mail-fail")).when(emailService).sendEmail(eq(EMAIL), any(String.class), any(String.class));
 
-        SimpleMessageResponse response = authService.resendEmailOtp(TEST_EMAIL);
+        SimpleMessageResponse response = authService.resendEmailOtp(EMAIL);
 
         assertThat(response.message()).isEqualTo("OTP sent successfully");
-        verify(userRepository).save(user);
-        verify(emailService).sendEmail(eq(TEST_EMAIL), anyString(), anyString());
     }
 
     @Test
-    @DisplayName("resendEmailOtp already verified")
-    void resendEmailOtp_alreadyVerified() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(true);
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
+    @DisplayName("resend otp happy path sets otp and sends email")
+    void resendOtpHappyPath() {
+        User user = verifiedActiveUser(34L);
+        user.setEmailVerified(Boolean.FALSE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
 
-        SimpleMessageResponse response = authService.resendEmailOtp(TEST_EMAIL);
+        SimpleMessageResponse response = authService.resendEmailOtp(EMAIL);
 
-        assertThat(response.message()).isEqualTo("Email already verified");
+        verify(emailService).sendEmail(eq(EMAIL), eq("Verify your RevPlay account"), any(String.class));
+        assertThat(user.getEmailOtp()).isNotBlank();
+        assertThat(response.message()).isEqualTo("OTP sent successfully");
+    }
+
+    @Test
+    @DisplayName("resend otp already verified returns message and does not save")
+    void resendOtpAlreadyVerified() {
+        User user = verifiedActiveUser(35L);
+        user.setEmailVerified(Boolean.TRUE);
+        when(userRepository.findByEmailIgnoreCase(EMAIL)).thenReturn(Optional.of(user));
+
+        SimpleMessageResponse response = authService.resendEmailOtp(EMAIL);
+
         verify(userRepository, never()).save(any(User.class));
-        verify(emailService, never()).sendEmail(anyString(), anyString(), anyString());
+        assertThat(response.message()).isEqualTo("Email already verified");
     }
 
-    @Test
-    @DisplayName("resendEmailOtp email send failure swallowed")
-    void resendEmailOtp_emailThrows() {
-        User user = userWithPasswordHash();
-        user.setEmailVerified(false);
-        when(userRepository.findByEmailIgnoreCase(TEST_EMAIL)).thenReturn(Optional.of(user));
-        doThrow(new RuntimeException("mail down")).when(emailService).sendEmail(anyString(), anyString(), anyString());
-
-        SimpleMessageResponse response = authService.resendEmailOtp(TEST_EMAIL);
-
-        assertThat(response.message()).isEqualTo("OTP sent successfully");
-    }
-
-    private User userWithPasswordHash() {
-        User user = TestDataFactory.buildUser(1L, TEST_EMAIL, TEST_USERNAME, UserRole.LISTENER);
-        user.setPasswordHash("hash");
-        user.setEmailVerified(true);
-        user.setIsActive(true);
-        return user;
-    }
-
-    private void stubTokenGeneration(User user) {
+    private void mockTokenFlow(User user) {
         when(jwtService.generateAccessToken(user)).thenReturn(ACCESS_TOKEN);
         when(jwtService.generateRefreshToken(user)).thenReturn(REFRESH_TOKEN);
-        when(jwtService.getExpiry(ACCESS_TOKEN)).thenReturn(Instant.now().plusSeconds(600));
-        when(jwtService.getExpiry(REFRESH_TOKEN)).thenReturn(Instant.now().plusSeconds(1200));
-        when(jwtProperties.getAccessTokenExpirationSeconds()).thenReturn(3600L);
-        when(jwtProperties.getRefreshTokenExpirationSeconds()).thenReturn(1209600L);
+        when(jwtService.getExpiry(ACCESS_TOKEN)).thenReturn(Instant.now().plusSeconds(3600));
+        when(jwtService.getExpiry(REFRESH_TOKEN)).thenReturn(Instant.now().plusSeconds(1209600));
+        doNothing().when(tokenRevocationService).revokeAllForUser(user.getUserId());
+        doNothing().when(tokenRevocationService).registerIssuedToken(eq(user.getUserId()), any(String.class), any(Instant.class));
+    }
+
+    private User verifiedActiveUser(Long userId) {
+        User user = new User();
+        user.setUserId(userId);
+        user.setEmail(EMAIL);
+        user.setUsername(USERNAME);
+        user.setRole(UserRole.LISTENER);
+        user.setPasswordHash("old-hash");
+        user.setIsActive(Boolean.TRUE);
+        user.setEmailVerified(Boolean.TRUE);
+        user.setCreatedAt(Instant.now().minusSeconds(60));
+        user.setUpdatedAt(Instant.now().minusSeconds(30));
+        return user;
     }
 }

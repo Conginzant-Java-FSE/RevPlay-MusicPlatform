@@ -1,92 +1,85 @@
 package com.revplay.musicplatform.security.service.impl;
 
-import com.revplay.musicplatform.user.exception.AuthValidationException;
-import org.junit.jupiter.api.*;
-
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.revplay.musicplatform.user.exception.AuthValidationException;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 @Tag("unit")
 class InMemoryRateLimiterServiceImplTest {
 
-    private static final String TEST_KEY = "test-key";
-    private static final String ERROR_MESSAGE = "Too many requests";
+    private static final String RATE_LIMIT_MESSAGE = "Rate limit exceeded";
     private static final int MAX_REQUESTS = 3;
-    private static final int WINDOW_SECONDS = 1;
+    private static final int WINDOW_SECONDS = 2;
+    private static final String KEY_A = "key-a";
+    private static final String KEY_B = "key-b";
 
-    private InMemoryRateLimiterServiceImpl rateLimiterService;
-
-    @BeforeEach
-    void setUp() {
-        rateLimiterService = new InMemoryRateLimiterServiceImpl();
-    }
+    private final InMemoryRateLimiterServiceImpl service = new InMemoryRateLimiterServiceImpl();
 
     @Test
-    @DisplayName("calls < maxRequests: no exception")
-    void ensureWithinLimit_BelowLimit_NoException() {
+    @DisplayName("calls below max requests do not throw")
+    void belowMaxRequests() {
         assertThatCode(() -> {
-            rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE);
-            rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE);
+            service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
+            service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
         }).doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("calls = maxRequests: no exception on Nth call")
-    void ensureWithinLimit_AtLimit_NoException() {
+    @DisplayName("boundary at max requests does not throw on nth call")
+    void boundaryAtMax() {
         assertThatCode(() -> {
-            for (int i = 0; i < MAX_REQUESTS; i++) {
-                rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE);
-            }
+            service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
+            service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
+            service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
         }).doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("calls = maxRequests + 1: exception on (N+1)th call")
-    void ensureWithinLimit_ExceedLimit_ThrowsException() {
-        for (int i = 0; i < MAX_REQUESTS; i++) {
-            rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE);
-        }
+    @DisplayName("max plus one throws with configured message")
+    void maxPlusOneThrows() {
+        service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
+        service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
+        service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
 
-        assertThatThrownBy(
-                () -> rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE))
+        assertThatThrownBy(() -> service.ensureWithinLimit(KEY_A, MAX_REQUESTS, WINDOW_SECONDS, RATE_LIMIT_MESSAGE))
                 .isInstanceOf(AuthValidationException.class)
-                .hasMessage(ERROR_MESSAGE);
+                .hasMessage(RATE_LIMIT_MESSAGE);
     }
 
     @Test
     @DisplayName("different keys are independent")
-    void ensureWithinLimit_IndependentKeys() {
-        String otherKey = "other-key";
-        for (int i = 0; i < MAX_REQUESTS; i++) {
-            rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE);
-        }
+    void differentKeysIndependent() {
+        service.ensureWithinLimit(KEY_A, 1, WINDOW_SECONDS, RATE_LIMIT_MESSAGE);
+        assertThatThrownBy(() -> service.ensureWithinLimit(KEY_A, 1, WINDOW_SECONDS, RATE_LIMIT_MESSAGE))
+                .isInstanceOf(AuthValidationException.class);
 
-        // TEST_KEY is at limit, but otherKey should be fine
-        assertThatCode(
-                () -> rateLimiterService.ensureWithinLimit(otherKey, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE))
+        assertThatCode(() -> service.ensureWithinLimit(KEY_B, 1, WINDOW_SECONDS, RATE_LIMIT_MESSAGE))
                 .doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("null key throws NullPointerException in current implementation")
-    void ensureWithinLimit_NullKey() {
-        assertThatThrownBy(() -> rateLimiterService.ensureWithinLimit(null, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE))
+    @DisplayName("null key currently raises null pointer exception")
+    void nullKeyHandled() {
+        assertThatThrownBy(() -> service.ensureWithinLimit(null, 1, WINDOW_SECONDS, RATE_LIMIT_MESSAGE))
                 .isInstanceOf(NullPointerException.class);
     }
 
     @Test
-    @DisplayName("window reset: limit resets after window expiry")
+    @DisplayName("window resets after sleep duration")
     @Timeout(5)
-    void ensureWithinLimit_WindowReset() throws InterruptedException {
-        for (int i = 0; i < MAX_REQUESTS; i++) {
-            rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE);
-        }
+    void windowReset() throws InterruptedException {
+        service.ensureWithinLimit(KEY_A, 1, 1, RATE_LIMIT_MESSAGE);
+        assertThatThrownBy(() -> service.ensureWithinLimit(KEY_A, 1, 1, RATE_LIMIT_MESSAGE))
+                .isInstanceOf(AuthValidationException.class);
 
-        // Wait for window to expire
         Thread.sleep(1100);
 
-        assertThatCode(
-                () -> rateLimiterService.ensureWithinLimit(TEST_KEY, MAX_REQUESTS, WINDOW_SECONDS, ERROR_MESSAGE))
+        assertThatCode(() -> service.ensureWithinLimit(KEY_A, 1, 1, RATE_LIMIT_MESSAGE))
                 .doesNotThrowAnyException();
     }
 }

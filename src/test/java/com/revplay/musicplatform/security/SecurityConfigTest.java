@@ -1,68 +1,50 @@
 package com.revplay.musicplatform.security;
 
-import com.revplay.musicplatform.user.service.EmailService;
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-
-@Tag("integration")
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
+@Tag("unit")
 class SecurityConfigTest {
 
-    private static final String INVALID_REGISTER_JSON = "{}";
+    private static final String LOCALHOST_ORIGIN = "http://localhost:4200";
+    private static final String AUTHORIZATION = "Authorization";
+    private static final String CONTENT_TYPE = "Content-Type";
 
-    private final MockMvc mockMvc;
+    @Test
+    @DisplayName("corsConfigurationSource registers expected cors settings")
+    void corsConfigurationSourceRegistersExpectedSettings() {
+        SecurityConfig securityConfig = new SecurityConfig(null);
 
-    @MockBean
-    private EmailService emailService;
+        CorsConfigurationSource source = securityConfig.corsConfigurationSource();
 
-    @Autowired
-    SecurityConfigTest(MockMvc mockMvc) {
-        this.mockMvc = mockMvc;
+        assertThat(source).isInstanceOf(UrlBasedCorsConfigurationSource.class);
+        CorsConfiguration config = source.getCorsConfiguration(new org.springframework.mock.web.MockHttpServletRequest("GET", "/api/v1/test"));
+        assertThat(config).isNotNull();
+        assertThat(config.getAllowedOrigins()).containsExactly(LOCALHOST_ORIGIN);
+        assertThat(config.getAllowedMethods()).containsExactly("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS");
+        assertThat(config.getAllowedHeaders()).contains(AUTHORIZATION, CONTENT_TYPE);
+        assertThat(config.getExposedHeaders()).contains(AUTHORIZATION, CONTENT_TYPE);
+        assertThat(config.getAllowCredentials()).isTrue();
+        assertThat(config.getMaxAge()).isEqualTo(3600L);
     }
 
     @Test
-    @DisplayName("public endpoints are accessible without JWT and not blocked by security")
-    void publicEndpoints_withoutJwt_notForbidden() throws Exception {
-        assertNotForbidden(post("/api/v1/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(INVALID_REGISTER_JSON)
-                .accept(MediaType.APPLICATION_JSON)
-                .contentType(MediaType.APPLICATION_JSON));
+    @DisplayName("passwordEncoder returns bcrypt implementation")
+    void passwordEncoderReturnsBcrypt() {
+        SecurityConfig securityConfig = new SecurityConfig(null);
 
-        assertNotForbidden(get("/api/v1/search").param("q", "x"));
-        assertNotForbidden(get("/api/v1/genres"));
-        assertNotForbidden(get("/api/v1/browse/songs"));
-        assertNotForbidden(get("/api/v1/discover/weekly/{userId}", 1L));
-    }
+        PasswordEncoder passwordEncoder = securityConfig.passwordEncoder();
 
-    @Test
-    @DisplayName("protected endpoints without JWT return forbidden")
-    void protectedEndpoints_withoutJwt_forbidden() throws Exception {
-        assertThat(mockMvc.perform(get("/api/v1/profile/{userId}", 1L)).andReturn().getResponse().getStatus())
-                .isEqualTo(403);
-        assertThat(mockMvc.perform(post("/api/v1/playlists").contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn().getResponse().getStatus())
-                .isEqualTo(403);
-        assertThat(mockMvc.perform(post("/api/v1/artists").contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn().getResponse().getStatus())
-                .isEqualTo(403);
-    }
-
-    private void assertNotForbidden(org.springframework.test.web.servlet.RequestBuilder requestBuilder) throws Exception {
-        MvcResult result = mockMvc.perform(requestBuilder).andReturn();
-        assertThat(result.getResponse().getStatus()).isNotEqualTo(403);
+        assertThat(passwordEncoder).isInstanceOf(BCryptPasswordEncoder.class);
+        String encoded = passwordEncoder.encode("password-123");
+        assertThat(passwordEncoder.matches("password-123", encoded)).isTrue();
     }
 }

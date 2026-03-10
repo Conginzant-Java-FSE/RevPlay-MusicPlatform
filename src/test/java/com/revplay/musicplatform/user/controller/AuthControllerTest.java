@@ -1,21 +1,39 @@
 package com.revplay.musicplatform.user.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
 import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
 import com.revplay.musicplatform.security.SecurityConfig;
-import com.revplay.musicplatform.security.service.JwtService;
-import com.revplay.musicplatform.security.service.TokenRevocationService;
-import com.revplay.musicplatform.user.dto.request.*;
+import com.revplay.musicplatform.user.dto.request.ChangePasswordRequest;
+import com.revplay.musicplatform.user.dto.request.ForgotPasswordRequest;
+import com.revplay.musicplatform.user.dto.request.LoginRequest;
+import com.revplay.musicplatform.user.dto.request.RefreshTokenRequest;
+import com.revplay.musicplatform.user.dto.request.RegisterRequest;
+import com.revplay.musicplatform.user.dto.request.ResetPasswordRequest;
 import com.revplay.musicplatform.user.dto.response.AuthTokenResponse;
 import com.revplay.musicplatform.user.dto.response.SimpleMessageResponse;
 import com.revplay.musicplatform.user.dto.response.UserResponse;
 import com.revplay.musicplatform.user.enums.UserRole;
 import com.revplay.musicplatform.user.exception.AuthConflictException;
-import com.revplay.musicplatform.user.exception.AuthNotFoundException;
 import com.revplay.musicplatform.user.exception.AuthUnauthorizedException;
-import com.revplay.musicplatform.user.exception.AuthValidationException;
 import com.revplay.musicplatform.user.service.AuthService;
+import java.time.Instant;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -30,253 +48,226 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.time.Instant;
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@Tag("unit")
 @WebMvcTest(AuthController.class)
-@Import(SecurityConfig.class)
+@Import({ SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class })
+@Tag("integration")
 class AuthControllerTest {
 
-    private static final String REGISTER_URL = "/api/v1/auth/register";
-    private static final String LOGIN_URL = "/api/v1/auth/login";
-    private static final String REFRESH_URL = "/api/v1/auth/refresh";
-    private static final String LOGOUT_URL = "/api/v1/auth/logout";
-    private static final String FORGOT_URL = "/api/v1/auth/forgot-password";
-    private static final String RESET_URL = "/api/v1/auth/reset-password";
-    private static final String CHANGE_URL = "/api/v1/auth/change-password";
+        private static final String BASE_URL = "/api/v1/auth";
+        private static final String ACCESS_TOKEN = "access-token";
+        private static final String REFRESH_TOKEN = "refresh-token";
+        private static final String TEST_EMAIL = "u@revplay.com";
+        private static final String TEST_USERNAME = "user1";
+        private static final String TEST_PASSWORD = "StrongPass@123";
+        private static final String TEST_NAME = "User One";
+        private static final String ROLE_LISTENER = "LISTENER";
+        private static final String BEARER = "Bearer";
+        private static final String LOGOUT_SUCCESS = "Logged out successfully";
+        private static final String RESET_SUCCESS = "Password reset successful";
+        private static final Long TEST_USER_ID = 1L;
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+        private final MockMvc mockMvc;
+        private final ObjectMapper objectMapper;
 
-    @MockBean
-    private AuthService authService;
-    @MockBean
-    private JwtService jwtService;
-    @MockBean
-    private TokenRevocationService tokenRevocationService;
-    @MockBean
-    private FileStorageProperties fileStorageProperties;
-    @MockBean
-    private JpaMetamodelMappingContext jpaMetamodelMappingContext;
+        @MockBean
+        private AuthService authService;
+        @MockBean
+        private JwtAuthenticationFilter jwtAuthenticationFilter;
+        @MockBean
+        private FileStorageProperties fileStorageProperties;
+        @MockBean
+        private JpaMetamodelMappingContext jpaMetamodelMappingContext;
 
-    @Autowired
-    AuthControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+        @Autowired
+        AuthControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
+                this.mockMvc = mockMvc;
+                this.objectMapper = objectMapper;
+        }
 
-    @Test
-    @DisplayName("POST register valid payload returns 201 with token data")
-    void register_valid() throws Exception {
-        when(authService.register(any(RegisterRequest.class))).thenReturn(tokenResponse());
+        @BeforeEach
+        void setUp() throws Exception {
+                doAnswer(invocation -> {
+                        HttpServletRequest request = invocation.getArgument(0);
+                        HttpServletResponse response = invocation.getArgument(1);
+                        FilterChain chain = invocation.getArgument(2);
+                        chain.doFilter(request, response);
+                        return null;
+                }).when(jwtAuthenticationFilter).doFilter(any(), any(), any());
+        }
 
-        mockMvc.perform(post(REGISTER_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RegisterRequest("a@b.com", "user123", "Strong123!", "User Name", "LISTENER"))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty());
-    }
+        @Test
+        @DisplayName("register returns 201 with token response envelope")
+        void registerValid() throws Exception {
+                RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_NAME,
+                                ROLE_LISTENER);
+                when(authService.register(any(RegisterRequest.class))).thenReturn(tokenResponse());
 
-    @Test
-    @DisplayName("POST register missing email returns 400 with validation errors")
-    void register_missingEmail() throws Exception {
-        String body = "{\"username\":\"user123\",\"password\":\"Strong123!\",\"fullName\":\"Name\"}";
+                mockMvc.perform(post(BASE_URL + "/register")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.success").value(true))
+                                .andExpect(jsonPath("$.data.accessToken").value(ACCESS_TOKEN))
+                                .andExpect(jsonPath("$.data.refreshToken").value(REFRESH_TOKEN));
+        }
 
-        mockMvc.perform(post(REGISTER_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.errors").isArray());
-    }
+        @Test
+        @DisplayName("register with missing email returns 400 and validation errors")
+        void registerMissingEmail() throws Exception {
+                String payload = String.format("{\"username\":\"%s\",\"password\":\"%s\",\"fullName\":\"%s\"}",
+                                TEST_USERNAME, TEST_PASSWORD, TEST_NAME);
+                mockMvc.perform(post(BASE_URL + "/register")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(payload))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.success").value(false))
+                                .andExpect(jsonPath("$.errors").isArray());
+        }
 
-    @Test
-    @DisplayName("POST register conflict maps to 409")
-    void register_conflict() throws Exception {
-        when(authService.register(any(RegisterRequest.class))).thenThrow(new AuthConflictException("Email already exists"));
+        @Test
+        @DisplayName("register conflict maps to 409")
+        void registerConflict() throws Exception {
+                RegisterRequest request = new RegisterRequest(TEST_EMAIL, TEST_USERNAME, TEST_PASSWORD, TEST_NAME,
+                                ROLE_LISTENER);
+                when(authService.register(any(RegisterRequest.class)))
+                                .thenThrow(new AuthConflictException("Email already exists"));
 
-        mockMvc.perform(post(REGISTER_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RegisterRequest("a@b.com", "user123", "Strong123!", "User Name", "LISTENER"))))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.success").value(false));
-    }
+                mockMvc.perform(post(BASE_URL + "/register")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isConflict())
+                                .andExpect(jsonPath("$.success").value(false));
+        }
 
-    @Test
-    @DisplayName("POST login valid payload returns 200 with tokens")
-    void login_valid() throws Exception {
-        when(authService.login(any(LoginRequest.class), anyString())).thenReturn(tokenResponse());
+        @Test
+        @DisplayName("login valid returns 200")
+        void loginValid() throws Exception {
+                LoginRequest request = new LoginRequest(TEST_EMAIL, TEST_PASSWORD);
+                when(authService.login(any(LoginRequest.class), any(String.class))).thenReturn(tokenResponse());
 
-        mockMvc.perform(post(LOGIN_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new LoginRequest("user123", "Strong123!"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty());
-    }
+                mockMvc.perform(post(BASE_URL + "/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.data.accessToken").value(ACCESS_TOKEN));
+        }
 
-    @Test
-    @DisplayName("POST login unauthorized maps to 401")
-    void login_unauthorized() throws Exception {
-        when(authService.login(any(LoginRequest.class), anyString())).thenThrow(new AuthUnauthorizedException("Invalid credentials"));
+        @Test
+        @DisplayName("login unauthorized maps to 401")
+        void loginUnauthorized() throws Exception {
+                LoginRequest request = new LoginRequest(TEST_EMAIL, "bad");
+                when(authService.login(any(LoginRequest.class), any(String.class)))
+                                .thenThrow(new AuthUnauthorizedException("Invalid credentials"));
 
-        mockMvc.perform(post(LOGIN_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new LoginRequest("user123", "bad"))))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.success").value(false));
-    }
+                mockMvc.perform(post(BASE_URL + "/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isUnauthorized())
+                                .andExpect(jsonPath("$.success").value(false));
+        }
 
-    @Test
-    @DisplayName("POST login with missing fields returns 400")
-    void login_missingFields() throws Exception {
-        mockMvc.perform(post(LOGIN_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.success").value(false));
-    }
+        @Test
+        @DisplayName("refresh valid returns 200")
+        void refreshValid() throws Exception {
+                when(authService.refreshToken(any(RefreshTokenRequest.class))).thenReturn(tokenResponse());
+                mockMvc.perform(post(BASE_URL + "/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(new RefreshTokenRequest(REFRESH_TOKEN))))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.success").value(true));
+        }
 
-    @Test
-    @DisplayName("POST refresh valid payload returns 200")
-    void refresh_valid() throws Exception {
-        when(authService.refreshToken(any(RefreshTokenRequest.class))).thenReturn(tokenResponse());
+        @Test
+        @DisplayName("refresh invalid token maps to 401")
+        void refreshInvalidToken() throws Exception {
+                when(authService.refreshToken(any(RefreshTokenRequest.class)))
+                                .thenThrow(new AuthUnauthorizedException("Invalid refresh token"));
+                mockMvc.perform(post(BASE_URL + "/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(new RefreshTokenRequest(REFRESH_TOKEN))))
+                                .andExpect(status().isUnauthorized());
+        }
 
-        mockMvc.perform(post(REFRESH_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RefreshTokenRequest("valid-refresh"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-    }
-
-    @Test
-    @DisplayName("POST refresh invalid token returns 401")
-    void refresh_invalidToken() throws Exception {
-        when(authService.refreshToken(any(RefreshTokenRequest.class))).thenThrow(new AuthUnauthorizedException("Invalid refresh token"));
-
-        mockMvc.perform(post(REFRESH_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RefreshTokenRequest("bad"))))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.success").value(false));
-    }
-
-    @Test
-    @DisplayName("POST logout with Authorization header returns 200")
-    void logout_withHeader() throws Exception {
-        when(authService.logout(anyString())).thenReturn(new SimpleMessageResponse("Logged out successfully"));
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(1L, "user", UserRole.LISTENER);
-
-        mockMvc.perform(post(LOGOUT_URL)
-                        .with(authentication(new UsernamePasswordAuthenticationToken(
+        @Test
+        @DisplayName("logout with header returns success")
+        void logoutWithHeader() throws Exception {
+                AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(TEST_USER_ID, TEST_USERNAME,
+                                UserRole.LISTENER);
+                UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
                                 principal,
                                 null,
-                                List.of(new SimpleGrantedAuthority("ROLE_LISTENER")))))
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer token"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.message").isNotEmpty());
-    }
+                                java.util.List.of(new SimpleGrantedAuthority("ROLE_LISTENER")));
 
-    @Test
-    @DisplayName("POST logout without header still returns 200")
-    void logout_withoutHeader() throws Exception {
-        when(authService.logout(any())).thenReturn(new SimpleMessageResponse("Logged out successfully"));
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(1L, "user", UserRole.LISTENER);
+                when(authService.logout(ACCESS_TOKEN)).thenReturn(new SimpleMessageResponse(LOGOUT_SUCCESS));
+                mockMvc.perform(post(BASE_URL + "/logout")
+                                .header(HttpHeaders.AUTHORIZATION, BEARER + " " + ACCESS_TOKEN)
+                                .with(authentication(authenticationToken)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.data.message").value(LOGOUT_SUCCESS));
+        }
 
-        mockMvc.perform(post(LOGOUT_URL)
-                        .with(authentication(new UsernamePasswordAuthenticationToken(
+        @Test
+        @DisplayName("forgot password valid request returns 200")
+        void forgotPasswordValid() throws Exception {
+                when(authService.forgotPassword(any(ForgotPasswordRequest.class), any(String.class)))
+                                .thenReturn(new SimpleMessageResponse("Password reset email sent successfully"));
+                mockMvc.perform(post(BASE_URL + "/forgot-password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(new ForgotPasswordRequest(TEST_EMAIL))))
+                                .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("reset password valid request returns 200")
+        void resetPasswordValid() throws Exception {
+                when(authService.resetPassword(any(ResetPasswordRequest.class)))
+                                .thenReturn(new SimpleMessageResponse(RESET_SUCCESS));
+                mockMvc.perform(post(BASE_URL + "/reset-password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper
+                                                .writeValueAsString(new ResetPasswordRequest("valid", TEST_PASSWORD))))
+                                .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("change password with authenticated principal returns 200")
+        void changePasswordAuthenticated() throws Exception {
+                AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(TEST_USER_ID, TEST_USERNAME,
+                                UserRole.LISTENER);
+                UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
                                 principal,
                                 null,
-                                List.of(new SimpleGrantedAuthority("ROLE_LISTENER"))))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-    }
+                                java.util.List.of(new SimpleGrantedAuthority("ROLE_LISTENER")));
+                when(authService.changePassword(eq(TEST_USER_ID), any(ChangePasswordRequest.class)))
+                                .thenReturn(new SimpleMessageResponse("Password changed successfully"));
 
-    @Test
-    @DisplayName("POST forgot-password valid payload returns 200")
-    void forgotPassword_valid() throws Exception {
-        when(authService.forgotPassword(any(ForgotPasswordRequest.class), anyString())).thenReturn(new SimpleMessageResponse("Password reset email sent successfully"));
+                mockMvc.perform(post(BASE_URL + "/change-password")
+                                .with(authentication(authenticationToken))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                                new ChangePasswordRequest("OldPass@123", TEST_PASSWORD))))
+                                .andExpect(status().isOk());
+        }
 
-        mockMvc.perform(post(FORGOT_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ForgotPasswordRequest("a@b.com"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-    }
+        @Test
+        @DisplayName("change password without jwt returns 403")
+        void changePasswordNoJwt() throws Exception {
+                mockMvc.perform(post(BASE_URL + "/change-password")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                                new ChangePasswordRequest("OldPass@123", TEST_PASSWORD))))
+                                .andExpect(status().isForbidden());
+        }
 
-    @Test
-    @DisplayName("POST forgot-password unknown email maps to 404")
-    void forgotPassword_notFound() throws Exception {
-        when(authService.forgotPassword(any(ForgotPasswordRequest.class), anyString())).thenThrow(new AuthNotFoundException("User not found"));
-
-        mockMvc.perform(post(FORGOT_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ForgotPasswordRequest("a@b.com"))))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.success").value(false));
-    }
-
-    @Test
-    @DisplayName("POST reset-password valid payload returns 200")
-    void resetPassword_valid() throws Exception {
-        when(authService.resetPassword(any(ResetPasswordRequest.class))).thenReturn(new SimpleMessageResponse("Password reset successful"));
-
-        mockMvc.perform(post(RESET_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ResetPasswordRequest("token", "NewStrong123!"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-    }
-
-    @Test
-    @DisplayName("POST reset-password expired token maps to 400")
-    void resetPassword_expiredToken() throws Exception {
-        when(authService.resetPassword(any(ResetPasswordRequest.class))).thenThrow(new AuthValidationException("Reset token is expired"));
-
-        mockMvc.perform(post(RESET_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ResetPasswordRequest("token", "NewStrong123!"))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.success").value(false));
-    }
-
-    @Test
-    @DisplayName("POST change-password with authenticated principal returns 200")
-    void changePassword_authenticated() throws Exception {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(1L, "user", UserRole.LISTENER);
-        when(authService.changePassword(anyLong(), any(ChangePasswordRequest.class))).thenReturn(new SimpleMessageResponse("Password changed successfully"));
-
-        mockMvc.perform(post(CHANGE_URL)
-                        .with(authentication(new UsernamePasswordAuthenticationToken(principal, null, List.of())))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ChangePasswordRequest("OldStrong1!", "NewStrong123!"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-    }
-
-    @Test
-    @DisplayName("POST change-password without JWT returns 403")
-    void changePassword_noJwt() throws Exception {
-        mockMvc.perform(post(CHANGE_URL)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ChangePasswordRequest("OldStrong1!", "NewStrong123!"))))
-                .andExpect(status().isForbidden());
-    }
-
-    private AuthTokenResponse tokenResponse() {
-        UserResponse user = new UserResponse(1L, "a@b.com", "user123", "LISTENER", true, Instant.now(), Instant.now());
-        return new AuthTokenResponse("Bearer", "access", 3600L, "refresh", 1209600L, user);
-    }
+        private AuthTokenResponse tokenResponse() {
+                return new AuthTokenResponse(
+                                BEARER,
+                                ACCESS_TOKEN,
+                                3600L,
+                                REFRESH_TOKEN,
+                                1209600L,
+                                new UserResponse(TEST_USER_ID, TEST_EMAIL, TEST_USERNAME, ROLE_LISTENER, true,
+                                                Instant.now(),
+                                                Instant.now()));
+        }
 }

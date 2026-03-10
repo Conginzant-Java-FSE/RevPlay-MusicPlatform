@@ -1,5 +1,13 @@
 package com.revplay.musicplatform.playback.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.playback.dto.request.QueueAddRequest;
 import com.revplay.musicplatform.playback.dto.request.QueueReorderRequest;
 import com.revplay.musicplatform.playback.dto.response.QueueItemResponse;
@@ -8,37 +16,30 @@ import com.revplay.musicplatform.playback.exception.PlaybackNotFoundException;
 import com.revplay.musicplatform.playback.exception.PlaybackValidationException;
 import com.revplay.musicplatform.playback.mapper.QueueItemMapper;
 import com.revplay.musicplatform.playback.repository.QueueItemRepository;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class QueueServiceImplTest {
 
     private static final Long USER_ID = 10L;
-    private static final Long OTHER_USER_ID = 20L;
-    private static final Long SONG_ID = 101L;
-    private static final Long EPISODE_ID = 202L;
-    private static final Long QUEUE_ID = 1L;
+    private static final Long SONG_ID = 99L;
+    private static final Long EPISODE_ID = 77L;
+    private static final Long QUEUE_ID_1 = 100L;
+    private static final Long QUEUE_ID_2 = 200L;
+    private static final String DB_DOWN = "db down";
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -47,202 +48,326 @@ class QueueServiceImplTest {
     @Mock
     private QueueItemMapper queueItemMapper;
 
-    @InjectMocks
-    private QueueServiceImpl service;
+    private QueueServiceImpl queueService;
+
+    @BeforeEach
+    void setUp() {
+        queueService = new QueueServiceImpl(jdbcTemplate, queueItemRepository, queueItemMapper);
+    }
 
     @Test
-    @DisplayName("addToQueue song on empty queue saves at position one")
-    void addToQueue_song_emptyQueue_positionOne() {
+    @DisplayName("addToQueue song only with empty queue assigns position one and saves")
+    void addToQueueSongOnlyEmptyQueue() {
         QueueAddRequest request = new QueueAddRequest(USER_ID, SONG_ID, null);
-        QueueItem saved = queueItem(QUEUE_ID, USER_ID, SONG_ID, null, 1);
-        QueueItemResponse response = new QueueItemResponse(QUEUE_ID, USER_ID, SONG_ID, null, 1, saved.getCreatedAt());
+        QueueItem saved = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        QueueItemResponse response = queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 1);
 
-        mockUserExists(USER_ID);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
         when(queueItemRepository.findTopByUserIdOrderByPositionDesc(USER_ID)).thenReturn(Optional.empty());
         when(queueItemRepository.save(any(QueueItem.class))).thenReturn(saved);
         when(queueItemMapper.toDto(saved)).thenReturn(response);
 
-        QueueItemResponse actual = service.addToQueue(request);
+        QueueItemResponse actual = queueService.addToQueue(request);
 
-        assertThat(actual.position()).isEqualTo(1);
         ArgumentCaptor<QueueItem> captor = ArgumentCaptor.forClass(QueueItem.class);
         verify(queueItemRepository).save(captor.capture());
-        assertThat(captor.getValue().getSongId()).isEqualTo(SONG_ID);
+        assertThat(captor.getValue().getPosition()).isEqualTo(1);
+        assertThat(actual.position()).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("addToQueue episode appends after existing queue")
-    void addToQueue_episode_existingQueue_positionPlusOne() {
+    @DisplayName("addToQueue episode only appends after last position")
+    void addToQueueEpisodeOnlyWithExistingItems() {
         QueueAddRequest request = new QueueAddRequest(USER_ID, null, EPISODE_ID);
-        QueueItem last = queueItem(99L, USER_ID, SONG_ID, null, 5);
-        QueueItem saved = queueItem(QUEUE_ID, USER_ID, null, EPISODE_ID, 6);
+        QueueItem lastItem = queueItem(USER_ID, SONG_ID, null, 5, QUEUE_ID_1);
+        QueueItem saved = queueItem(USER_ID, null, EPISODE_ID, 6, QUEUE_ID_2);
 
-        mockUserExists(USER_ID);
-        when(queueItemRepository.findTopByUserIdOrderByPositionDesc(USER_ID)).thenReturn(Optional.of(last));
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findTopByUserIdOrderByPositionDesc(USER_ID)).thenReturn(Optional.of(lastItem));
         when(queueItemRepository.save(any(QueueItem.class))).thenReturn(saved);
-        when(queueItemMapper.toDto(saved)).thenReturn(new QueueItemResponse(QUEUE_ID, USER_ID, null, EPISODE_ID, 6, saved.getCreatedAt()));
+        when(queueItemMapper.toDto(saved)).thenReturn(queueResponse(QUEUE_ID_2, USER_ID, null, EPISODE_ID, 6));
 
-        QueueItemResponse actual = service.addToQueue(request);
+        QueueItemResponse actual = queueService.addToQueue(request);
 
         assertThat(actual.position()).isEqualTo(6);
     }
 
     @Test
-    @DisplayName("addToQueue null request throws PlaybackValidationException")
-    void addToQueue_nullRequest_throws() {
-        assertThatThrownBy(() -> service.addToQueue(null))
+    @DisplayName("addToQueue with null request throws playback validation exception")
+    void addToQueueNullRequest() {
+        assertThatThrownBy(() -> queueService.addToQueue(null))
                 .isInstanceOf(PlaybackValidationException.class)
                 .hasMessage("userId is required");
     }
 
     @Test
-    @DisplayName("addToQueue both song and episode missing throws validation")
-    void addToQueue_bothIdsMissing_throws() {
+    @DisplayName("addToQueue with both song and episode null throws playback validation exception")
+    void addToQueueBothNull() {
         QueueAddRequest request = new QueueAddRequest(USER_ID, null, null);
-        mockUserExists(USER_ID);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
 
-        assertThatThrownBy(() -> service.addToQueue(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        assertThatThrownBy(() -> queueService.addToQueue(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("Exactly one of songId or episodeId must be provided");
     }
 
     @Test
-    @DisplayName("addToQueue both song and episode set throws validation")
-    void addToQueue_bothIdsSet_throws() {
+    @DisplayName("addToQueue with both song and episode set throws playback validation exception")
+    void addToQueueBothSet() {
         QueueAddRequest request = new QueueAddRequest(USER_ID, SONG_ID, EPISODE_ID);
-        mockUserExists(USER_ID);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
 
-        assertThatThrownBy(() -> service.addToQueue(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        assertThatThrownBy(() -> queueService.addToQueue(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("Exactly one of songId or episodeId must be provided");
     }
 
     @Test
-    @DisplayName("addToQueue user not found throws PlaybackNotFoundException")
-    void addToQueue_userNotFound_throws() {
+    @DisplayName("addToQueue when user does not exist throws playback not found exception")
+    void addToQueueUserNotInDb() {
         QueueAddRequest request = new QueueAddRequest(USER_ID, SONG_ID, null);
         when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(0L);
 
-        assertThatThrownBy(() -> service.addToQueue(request))
-                .isInstanceOf(PlaybackNotFoundException.class);
+        assertThatThrownBy(() -> queueService.addToQueue(request))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("User " + USER_ID + " does not exist");
     }
 
     @Test
-    @DisplayName("addToQueue DataAccessException from JdbcTemplate is propagated")
-    void addToQueue_dataAccessException_propagates() {
+    @DisplayName("addToQueue propagates data access exception")
+    void addToQueueJdbcTemplateThrows() {
         QueueAddRequest request = new QueueAddRequest(USER_ID, SONG_ID, null);
         when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID)))
-                .thenThrow(new DataAccessResourceFailureException("db down"));
+                .thenThrow(new DataAccessResourceFailureException(DB_DOWN));
 
-        assertThatThrownBy(() -> service.addToQueue(request))
-                .isInstanceOf(DataAccessResourceFailureException.class);
+        assertThatThrownBy(() -> queueService.addToQueue(request))
+                .isInstanceOf(DataAccessResourceFailureException.class)
+                .hasMessageContaining(DB_DOWN);
     }
 
     @Test
-    @DisplayName("getQueue returns ordered items when present")
-    void getQueue_itemsPresent_returnsOrderedList() {
-        QueueItem item1 = queueItem(1L, USER_ID, SONG_ID, null, 1);
-        QueueItem item2 = queueItem(2L, USER_ID, null, EPISODE_ID, 2);
-        mockUserExists(USER_ID);
-        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(item1, item2));
-        when(queueItemMapper.toDto(item1)).thenReturn(new QueueItemResponse(1L, USER_ID, SONG_ID, null, 1, item1.getCreatedAt()));
-        when(queueItemMapper.toDto(item2)).thenReturn(new QueueItemResponse(2L, USER_ID, null, EPISODE_ID, 2, item2.getCreatedAt()));
+    @DisplayName("getQueue with items returns ordered list")
+    void getQueueReturnsItems() {
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        QueueItem second = queueItem(USER_ID, null, EPISODE_ID, 2, QUEUE_ID_2);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(first, second));
+        when(queueItemMapper.toDto(first)).thenReturn(queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 1));
+        when(queueItemMapper.toDto(second)).thenReturn(queueResponse(QUEUE_ID_2, USER_ID, null, EPISODE_ID, 2));
 
-        List<QueueItemResponse> actual = service.getQueue(USER_ID);
+        List<QueueItemResponse> queue = queueService.getQueue(USER_ID);
 
-        assertThat(actual).hasSize(2);
-        assertThat(actual.get(0).position()).isEqualTo(1);
-        assertThat(actual.get(1).position()).isEqualTo(2);
+        assertThat(queue).hasSize(2);
+        assertThat(queue.get(0).position()).isEqualTo(1);
+        assertThat(queue.get(1).position()).isEqualTo(2);
     }
 
     @Test
-    @DisplayName("getQueue empty queue returns empty list")
-    void getQueue_empty_returnsEmptyList() {
-        mockUserExists(USER_ID);
+    @DisplayName("getQueue with empty data returns empty list")
+    void getQueueEmpty() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
         when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of());
 
-        List<QueueItemResponse> actual = service.getQueue(USER_ID);
+        List<QueueItemResponse> queue = queueService.getQueue(USER_ID);
 
-        assertThat(actual).isEmpty();
+        assertThat(queue).isEmpty();
     }
 
     @Test
-    @DisplayName("removeFromQueue found item deletes successfully")
-    void removeFromQueue_found_deletes() {
-        QueueItem item = queueItem(QUEUE_ID, USER_ID, SONG_ID, null, 1);
-        when(queueItemRepository.findById(QUEUE_ID)).thenReturn(Optional.of(item));
+    @DisplayName("getQueue with null user id fails validation")
+    void getQueueNullUserId() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq((Long) null))).thenReturn(0L);
 
-        service.removeFromQueue(QUEUE_ID);
-
-        verify(queueItemRepository).delete(item);
+        assertThatThrownBy(() -> queueService.getQueue(null))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("User null does not exist");
     }
 
     @Test
-    @DisplayName("removeFromQueue missing item throws PlaybackNotFoundException")
-    void removeFromQueue_notFound_throws() {
-        when(queueItemRepository.findById(QUEUE_ID)).thenReturn(Optional.empty());
+    @DisplayName("getQueue when user count is null throws playback not found exception")
+    void getQueueNullUserCount() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(null);
 
-        assertThatThrownBy(() -> service.removeFromQueue(QUEUE_ID))
-                .isInstanceOf(PlaybackNotFoundException.class);
+        assertThatThrownBy(() -> queueService.getQueue(USER_ID))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("User " + USER_ID + " does not exist");
     }
 
     @Test
-    @DisplayName("reorder valid request updates positions")
-    void reorder_valid_updatesPositions() {
-        QueueItem q1 = queueItem(11L, USER_ID, 111L, null, 1);
-        QueueItem q2 = queueItem(12L, USER_ID, 112L, null, 2);
-        QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of(12L, 11L));
+    @DisplayName("removeFromQueue deletes when queue item exists")
+    void removeFromQueueFound() {
+        QueueItem entity = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        when(queueItemRepository.findById(QUEUE_ID_1)).thenReturn(Optional.of(entity));
 
-        mockUserExists(USER_ID);
-        when(queueItemRepository.findByUserIdForUpdate(USER_ID)).thenReturn(List.of(q1, q2));
-        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(q2, q1));
-        when(queueItemMapper.toDto(q2)).thenReturn(new QueueItemResponse(12L, USER_ID, 112L, null, 1, q2.getCreatedAt()));
-        when(queueItemMapper.toDto(q1)).thenReturn(new QueueItemResponse(11L, USER_ID, 111L, null, 2, q1.getCreatedAt()));
+        queueService.removeFromQueue(QUEUE_ID_1);
 
-        List<QueueItemResponse> actual = service.reorder(request);
-
-        assertThat(actual).hasSize(2);
-        assertThat(q2.getPosition()).isEqualTo(1);
-        assertThat(q1.getPosition()).isEqualTo(2);
-        verify(queueItemRepository).saveAll(List.of(q2, q1));
+        verify(queueItemRepository).delete(entity);
     }
 
     @Test
-    @DisplayName("reorder queue item from different user throws PlaybackValidationException")
-    void reorder_itemNotOwned_throws() {
-        QueueItem q1 = queueItem(11L, USER_ID, 111L, null, 1);
-        QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of(99L));
-        mockUserExists(USER_ID);
-        when(queueItemRepository.findByUserIdForUpdate(USER_ID)).thenReturn(List.of(q1));
+    @DisplayName("removeFromQueue throws not found when queue item missing")
+    void removeFromQueueNotFound() {
+        when(queueItemRepository.findById(QUEUE_ID_1)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.reorder(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        assertThatThrownBy(() -> queueService.removeFromQueue(QUEUE_ID_1))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("Queue item " + QUEUE_ID_1 + " not found");
     }
 
     @Test
-    @DisplayName("reorder duplicate queue ids throws PlaybackValidationException")
-    void reorder_duplicateQueueIds_throws() {
-        QueueItem q1 = queueItem(11L, USER_ID, 111L, null, 1);
-        QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of(11L, 11L));
-        mockUserExists(USER_ID);
-        when(queueItemRepository.findByUserIdForUpdate(USER_ID)).thenReturn(List.of(q1));
+    @DisplayName("reorder with valid queue updates positions")
+    void reorderValid() {
+        QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of(QUEUE_ID_2, QUEUE_ID_1));
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        QueueItem second = queueItem(USER_ID, EPISODE_ID, null, 2, QUEUE_ID_2);
 
-        assertThatThrownBy(() -> service.reorder(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdForUpdate(USER_ID)).thenReturn(List.of(first, second));
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(second, first));
+        when(queueItemMapper.toDto(second)).thenReturn(queueResponse(QUEUE_ID_2, USER_ID, EPISODE_ID, null, 1));
+        when(queueItemMapper.toDto(first)).thenReturn(queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 2));
+
+        List<QueueItemResponse> result = queueService.reorder(request);
+
+        verify(queueItemRepository).saveAll(List.of(second, first));
+        assertThat(result).hasSize(2);
+        assertThat(second.getPosition()).isEqualTo(1);
+        assertThat(first.getPosition()).isEqualTo(2);
     }
 
     @Test
-    @DisplayName("reorder empty list throws PlaybackValidationException")
-    void reorder_emptyList_throws() {
+    @DisplayName("reorder with queue item from another user fails validation")
+    void reorderDifferentUserItem() {
+        QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of(QUEUE_ID_1, QUEUE_ID_2));
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdForUpdate(USER_ID)).thenReturn(List.of(first));
+
+        assertThatThrownBy(() -> queueService.reorder(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("Queue item " + QUEUE_ID_2 + " does not belong to user " + USER_ID);
+    }
+
+    @Test
+    @DisplayName("reorder with duplicate queue ids fails validation")
+    void reorderDuplicateQueueIds() {
+        QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of(QUEUE_ID_1, QUEUE_ID_1));
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdForUpdate(USER_ID)).thenReturn(List.of(first));
+
+        assertThatThrownBy(() -> queueService.reorder(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("queueIdsInOrder contains duplicate queue IDs");
+    }
+
+    @Test
+    @DisplayName("reorder with empty queue id list fails validation")
+    void reorderEmptyList() {
         QueueReorderRequest request = new QueueReorderRequest(USER_ID, List.of());
 
-        assertThatThrownBy(() -> service.reorder(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        assertThatThrownBy(() -> queueService.reorder(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("userId and queueIdsInOrder are required");
+
+        verify(queueItemRepository, never()).findByUserIdForUpdate(any());
     }
 
-    private void mockUserExists(Long userId) {
-        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(userId))).thenReturn(1L);
+    @Test
+    @DisplayName("reorder with null request fails with null pointer exception")
+    void reorderNullRequest() {
+        assertThatThrownBy(() -> queueService.reorder(null))
+                .isInstanceOf(NullPointerException.class);
     }
 
-    private QueueItem queueItem(Long queueId, Long userId, Long songId, Long episodeId, Integer position) {
+    @Test
+    @DisplayName("reorder with null user id fails validation")
+    void reorderNullUserId() {
+        QueueReorderRequest request = new QueueReorderRequest(null, List.of(QUEUE_ID_1));
+
+        assertThatThrownBy(() -> queueService.reorder(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("userId and queueIdsInOrder are required");
+    }
+
+    @Test
+    @DisplayName("next returns following queue item")
+    void nextReturnsFollowingQueueItem() {
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        QueueItem second = queueItem(USER_ID, null, EPISODE_ID, 2, QUEUE_ID_2);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(first, second));
+        when(queueItemMapper.toDto(first)).thenReturn(queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 1));
+        when(queueItemMapper.toDto(second)).thenReturn(queueResponse(QUEUE_ID_2, USER_ID, null, EPISODE_ID, 2));
+
+        QueueItemResponse next = queueService.next(USER_ID, QUEUE_ID_1);
+
+        assertThat(next.queueId()).isEqualTo(QUEUE_ID_2);
+    }
+
+    @Test
+    @DisplayName("next wraps to first queue item when current is last")
+    void nextWrapsToFirstQueueItem() {
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        QueueItem second = queueItem(USER_ID, null, EPISODE_ID, 2, QUEUE_ID_2);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(first, second));
+        when(queueItemMapper.toDto(first)).thenReturn(queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 1));
+        when(queueItemMapper.toDto(second)).thenReturn(queueResponse(QUEUE_ID_2, USER_ID, null, EPISODE_ID, 2));
+
+        QueueItemResponse next = queueService.next(USER_ID, QUEUE_ID_2);
+
+        assertThat(next.queueId()).isEqualTo(QUEUE_ID_1);
+    }
+
+    @Test
+    @DisplayName("previous wraps to last queue item when current is first")
+    void previousWrapsToLastQueueItem() {
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        QueueItem second = queueItem(USER_ID, null, EPISODE_ID, 2, QUEUE_ID_2);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(first, second));
+        when(queueItemMapper.toDto(first)).thenReturn(queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 1));
+        when(queueItemMapper.toDto(second)).thenReturn(queueResponse(QUEUE_ID_2, USER_ID, null, EPISODE_ID, 2));
+
+        QueueItemResponse previous = queueService.previous(USER_ID, QUEUE_ID_1);
+
+        assertThat(previous.queueId()).isEqualTo(QUEUE_ID_2);
+    }
+
+    @Test
+    @DisplayName("next with null current queue id fails validation")
+    void nextNullCurrentQueueId() {
+        assertThatThrownBy(() -> queueService.next(USER_ID, null))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("currentQueueId is required");
+    }
+
+    @Test
+    @DisplayName("previous with empty queue throws not found exception")
+    void previousEmptyQueue() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> queueService.previous(USER_ID, QUEUE_ID_1))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("Queue is empty for user " + USER_ID);
+    }
+
+    @Test
+    @DisplayName("next with missing queue id throws not found exception")
+    void nextMissingQueueItem() {
+        QueueItem first = queueItem(USER_ID, SONG_ID, null, 1, QUEUE_ID_1);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(queueItemRepository.findByUserIdOrderByPositionAscQueueIdAsc(USER_ID)).thenReturn(List.of(first));
+        when(queueItemMapper.toDto(first)).thenReturn(queueResponse(QUEUE_ID_1, USER_ID, SONG_ID, null, 1));
+
+        assertThatThrownBy(() -> queueService.next(USER_ID, QUEUE_ID_2))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("Queue item " + QUEUE_ID_2 + " not found for user " + USER_ID);
+    }
+
+    private QueueItem queueItem(Long userId, Long songId, Long episodeId, Integer position, Long queueId) {
         QueueItem item = new QueueItem();
         item.setQueueId(queueId);
         item.setUserId(userId);
@@ -251,5 +376,9 @@ class QueueServiceImplTest {
         item.setPosition(position);
         item.setCreatedAt(Instant.now());
         return item;
+    }
+
+    private QueueItemResponse queueResponse(Long queueId, Long userId, Long songId, Long episodeId, Integer position) {
+        return new QueueItemResponse(queueId, userId, songId, episodeId, position, Instant.now());
     }
 }

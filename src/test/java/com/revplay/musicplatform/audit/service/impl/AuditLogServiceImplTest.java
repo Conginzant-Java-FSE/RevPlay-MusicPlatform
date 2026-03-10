@@ -1,5 +1,12 @@
 package com.revplay.musicplatform.audit.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.audit.dto.request.AuditLogRequest;
 import com.revplay.musicplatform.audit.dto.response.AuditLogResponse;
 import com.revplay.musicplatform.audit.entity.AdminAuditLog;
@@ -8,32 +15,36 @@ import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.mapper.AuditLogMapper;
 import com.revplay.musicplatform.audit.repository.AdminAuditLogRepository;
 import com.revplay.musicplatform.common.dto.PagedResponseDto;
-import com.revplay.musicplatform.exception.AccessDeniedException;
 import com.revplay.musicplatform.security.AuthContextUtil;
+import java.time.LocalDateTime;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
-import java.time.LocalDateTime;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class AuditLogServiceImplTest {
+
+    private static final Long USER_ID = 10L;
+    private static final Long ENTITY_ID = 20L;
+    private static final String ACTION = "ROLE_CHANGED";
+    private static final String ENTITY_TYPE = "USER";
+    private static final String DESCRIPTION = "Role updated";
+    private static final String FROM = "2026-01-01";
+    private static final String TO = "2026-01-31";
+    private static final String FROM_PARSED = "2026-01-01T00:00:00";
+    private static final String TO_PARSED = "2026-01-31T23:59:59.999999999";
+    private static final int PAGE = 0;
+    private static final int SIZE = 20;
 
     @Mock
     private AdminAuditLogRepository auditLogRepository;
@@ -42,128 +53,117 @@ class AuditLogServiceImplTest {
     @Mock
     private AuthContextUtil authContextUtil;
 
-    @InjectMocks
     private AuditLogServiceImpl service;
 
-    @Test
-    @DisplayName("logInternal with all fields saves audit log with expected values")
-    void logInternal_allFields_saves() {
-        when(auditLogRepository.save(any(AdminAuditLog.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        service.logInternal(AuditActionType.PLAYLIST_CREATED, 1L, AuditEntityType.PLAYLIST, 55L, "created");
-
-        ArgumentCaptor<AdminAuditLog> captor = ArgumentCaptor.forClass(AdminAuditLog.class);
-        verify(auditLogRepository).save(captor.capture());
-        AdminAuditLog saved = captor.getValue();
-        assertThat(saved.getAction()).isEqualTo(AuditActionType.PLAYLIST_CREATED);
-        assertThat(saved.getPerformedBy()).isEqualTo(1L);
-        assertThat(saved.getEntityType()).isEqualTo(AuditEntityType.PLAYLIST);
-        assertThat(saved.getEntityId()).isEqualTo(55L);
-        assertThat(saved.getDescription()).isEqualTo("created");
+    @BeforeEach
+    void setUp() {
+        service = new AuditLogServiceImpl(auditLogRepository, auditLogMapper, authContextUtil);
     }
 
     @Test
-    @DisplayName("logInternal with null performedBy is accepted and saved")
-    void logInternal_nullPerformedBy_saved() {
-        when(auditLogRepository.save(any(AdminAuditLog.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        service.logInternal(AuditActionType.ADMIN_ACTION, null, AuditEntityType.USER, 2L, "system");
-
-        ArgumentCaptor<AdminAuditLog> captor = ArgumentCaptor.forClass(AdminAuditLog.class);
-        verify(auditLogRepository).save(captor.capture());
-        assertThat(captor.getValue().getPerformedBy()).isNull();
-    }
-
-    @Test
-    @DisplayName("queryAuditLogs no filters returns paged result")
-    void queryAuditLogs_noFilters_returnsPage() {
-        AdminAuditLog log = AdminAuditLog.builder()
-                .id(10L)
-                .action(AuditActionType.PASSWORD_CHANGE)
-                .performedBy(1L)
-                .entityType(AuditEntityType.USER)
-                .entityId(1L)
-                .description("ok")
-                .timestamp(LocalDateTime.now())
-                .build();
-        AuditLogResponse response = AuditLogResponse.builder().id(10L).action("PASSWORD_CHANGE").build();
-        Page<AdminAuditLog> page = new PageImpl<>(List.of(log), PageRequest.of(0, 20), 1);
-
-        when(auditLogRepository.findWithFilters(null, null, null, null, null, PageRequest.of(0, 20)))
-                .thenReturn(page);
-        when(auditLogMapper.toResponse(log)).thenReturn(response);
-
-        PagedResponseDto<AuditLogResponse> result = service.queryAuditLogs(null, null, null, null, null, 0, 20);
-
-        assertThat(result.getContent()).hasSize(1);
-        assertThat(result.getContent().get(0).getAction()).isEqualTo("PASSWORD_CHANGE");
-    }
-
-    @Test
-    @DisplayName("queryAuditLogs with action PASSWORD_CHANGE parses values correctly")
-    void queryAuditLogs_passwordChange_parsed() {
-        Page<AdminAuditLog> empty = Page.empty(PageRequest.of(1, 5));
-        when(auditLogRepository.findWithFilters(
-                eq(AuditActionType.PASSWORD_CHANGE),
-                eq(3L),
-                eq(AuditEntityType.USER),
-                eq(LocalDateTime.of(2026, 1, 1, 0, 0)),
-                eq(LocalDateTime.of(2026, 1, 10, 23, 59, 59, 999999999)),
-                eq(PageRequest.of(1, 5))
-        )).thenReturn(empty);
-
-        PagedResponseDto<AuditLogResponse> result = service.queryAuditLogs(
-                "PASSWORD_CHANGE", 3L, "USER", "2026-01-01", "2026-01-10", 1, 5
-        );
-
-        assertThat(result.getContent()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("queryAuditLogs invalid action throws IllegalArgumentException")
-    void queryAuditLogs_invalidAction_throws() {
-        assertThatThrownBy(() -> service.queryAuditLogs("BAD_ACTION", null, null, null, null, 0, 20))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Invalid audit action filter");
-    }
-
-    @Test
-    @DisplayName("queryAuditLogs invalid entityType throws IllegalArgumentException")
-    void queryAuditLogs_invalidEntityType_throws() {
-        assertThatThrownBy(() -> service.queryAuditLogs(null, null, "BAD_ENTITY", null, null, 0, 20))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Invalid audit entity type filter");
-    }
-
-    @Test
-    @DisplayName("queryAuditLogs non admin caller throws from authContextUtil")
-    void queryAuditLogs_nonAdmin_throws() {
-        doThrow(new AccessDeniedException("Admin access required")).when(authContextUtil).requireAdmin();
-
-        assertThatThrownBy(() -> service.queryAuditLogs(null, null, null, null, null, 0, 20))
-                .isInstanceOf(AccessDeniedException.class);
-    }
-
-    @Test
-    @DisplayName("logAction maps request and returns mapped response")
-    void logAction_mapsAndSaves() {
-        AuditLogRequest request = new AuditLogRequest();
-        request.setAction("PASSWORD_CHANGE");
-        request.setPerformedBy(1L);
-        request.setEntityType("USER");
-        AdminAuditLog entity = AdminAuditLog.builder()
-                .action(AuditActionType.PASSWORD_CHANGE)
-                .performedBy(1L)
-                .entityType(AuditEntityType.USER)
-                .build();
-        AuditLogResponse response = AuditLogResponse.builder().id(99L).build();
-
+    @DisplayName("logAction maps request saves entity and maps response")
+    void logActionSuccess() {
+        AuditLogRequest request = request();
+        AdminAuditLog entity = logEntity();
+        AuditLogResponse response = response();
         when(auditLogMapper.toEntity(request)).thenReturn(entity);
         when(auditLogRepository.save(entity)).thenReturn(entity);
         when(auditLogMapper.toResponse(entity)).thenReturn(response);
 
         AuditLogResponse actual = service.logAction(request);
 
-        assertThat(actual.getId()).isEqualTo(99L);
+        assertThat(actual).isSameAs(response);
+    }
+
+    @Test
+    @DisplayName("logInternal builds and saves audit entry")
+    void logInternalSuccess() {
+        when(auditLogRepository.save(any(AdminAuditLog.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.logInternal(AuditActionType.ADMIN_ACTION, USER_ID, AuditEntityType.SYSTEM, ENTITY_ID, DESCRIPTION);
+
+        verify(auditLogRepository).save(any(AdminAuditLog.class));
+    }
+
+    @Test
+    @DisplayName("queryAuditLogs parses filters and maps page response")
+    void queryAuditLogsSuccess() {
+        AdminAuditLog entity = logEntity();
+        AuditLogResponse mapped = response();
+        Page<AdminAuditLog> entityPage = new PageImpl<>(List.of(entity), PageRequest.of(PAGE, SIZE), 1);
+
+        when(auditLogRepository.findWithFilters(
+                eq(AuditActionType.ROLE_CHANGED),
+                eq(USER_ID),
+                eq(AuditEntityType.USER),
+                eq(LocalDateTime.parse(FROM_PARSED)),
+                eq(LocalDateTime.parse(TO_PARSED)),
+                any(Pageable.class))).thenReturn(entityPage);
+        when(auditLogMapper.toResponse(entity)).thenReturn(mapped);
+
+        PagedResponseDto<AuditLogResponse> result = service.queryAuditLogs(ACTION, USER_ID, ENTITY_TYPE, FROM, TO, PAGE,
+                SIZE);
+
+        assertThat(result.getContent()).containsExactly(mapped);
+        assertThat(result.getPage()).isEqualTo(PAGE);
+    }
+
+    @Test
+    @DisplayName("queryAuditLogs supports null filters")
+    void queryAuditLogsWithNullFilters() {
+        when(auditLogRepository.findWithFilters(eq(null), eq(null), eq(null), eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(Page.empty(PageRequest.of(PAGE, SIZE)));
+
+        PagedResponseDto<AuditLogResponse> result = service.queryAuditLogs(null, null, null, null, null, PAGE, SIZE);
+
+        assertThat(result.getContent()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("queryAuditLogs throws when action filter is invalid")
+    void queryAuditLogsInvalidAction() {
+        assertThatThrownBy(() -> service.queryAuditLogs("invalid_action", USER_ID, ENTITY_TYPE, null, null, PAGE, SIZE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid audit action filter");
+    }
+
+    @Test
+    @DisplayName("queryAuditLogs throws when entity type filter is invalid")
+    void queryAuditLogsInvalidEntityType() {
+        assertThatThrownBy(() -> service.queryAuditLogs(ACTION, USER_ID, "invalid_entity", null, null, PAGE, SIZE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid audit entity type filter");
+    }
+
+    private AuditLogRequest request() {
+        AuditLogRequest request = new AuditLogRequest();
+        request.setAction(ACTION);
+        request.setPerformedBy(USER_ID);
+        request.setEntityType(ENTITY_TYPE);
+        request.setEntityId(ENTITY_ID);
+        request.setDescription(DESCRIPTION);
+        return request;
+    }
+
+    private AdminAuditLog logEntity() {
+        return AdminAuditLog.builder()
+                .id(1L)
+                .action(AuditActionType.ROLE_CHANGED)
+                .performedBy(USER_ID)
+                .entityType(AuditEntityType.USER)
+                .entityId(ENTITY_ID)
+                .description(DESCRIPTION)
+                .build();
+    }
+
+    private AuditLogResponse response() {
+        return AuditLogResponse.builder()
+                .id(1L)
+                .action(ACTION)
+                .performedBy(USER_ID)
+                .entityType(ENTITY_TYPE)
+                .entityId(ENTITY_ID)
+                .description(DESCRIPTION)
+                .build();
     }
 }

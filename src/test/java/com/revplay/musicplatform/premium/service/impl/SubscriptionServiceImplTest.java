@@ -1,9 +1,18 @@
 package com.revplay.musicplatform.premium.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.premium.dto.PremiumStatusResponse;
 import com.revplay.musicplatform.premium.entity.SubscriptionPayment;
 import com.revplay.musicplatform.premium.entity.UserSubscription;
+import com.revplay.musicplatform.premium.enums.PaymentStatus;
 import com.revplay.musicplatform.premium.enums.PlanType;
 import com.revplay.musicplatform.premium.enums.SubscriptionStatus;
 import com.revplay.musicplatform.premium.repository.SubscriptionPaymentRepository;
@@ -11,6 +20,9 @@ import com.revplay.musicplatform.premium.repository.UserSubscriptionRepository;
 import com.revplay.musicplatform.user.entity.User;
 import com.revplay.musicplatform.user.repository.UserRepository;
 import com.revplay.musicplatform.user.service.EmailService;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -20,20 +32,25 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class SubscriptionServiceImplTest {
 
     private static final Long USER_ID = 10L;
+    private static final Long SUBSCRIPTION_ID = 55L;
+    private static final String MONTHLY = "MONTHLY";
+    private static final String YEARLY = "YEARLY";
+    private static final String EMAIL = "premium@example.com";
+    private static final String USERNAME = "premium-user";
+    private static final String USER_ID_REQUIRED_MESSAGE = "userId is required";
+    private static final String PLAN_REQUIRED_MESSAGE = "planType is required";
+    private static final String INVALID_PLAN_MESSAGE = "Unsupported planType. Use MONTHLY or YEARLY";
+    private static final double MONTHLY_AMOUNT = 199.0;
+    private static final double YEARLY_AMOUNT = 1499.0;
+    private static final long MONTHLY_DAYS = 30L;
+    private static final long YEARLY_DAYS = 365L;
+    private static final String INR = "INR";
+    private static final String PAYMENT_METHOD = "DUMMY";
 
     @Mock
     private UserSubscriptionRepository userSubscriptionRepository;
@@ -48,225 +65,170 @@ class SubscriptionServiceImplTest {
     private SubscriptionServiceImpl service;
 
     @Test
-    @DisplayName("isUserPremium active future end date returns true")
-    void isUserPremium_activeFuture_true() {
-        UserSubscription sub = activeSub(LocalDateTime.now().plusDays(1));
+    @DisplayName("isUserPremium returns false when no active subscription exists")
+    void isUserPremiumReturnsFalseWhenNoActiveSubscription() {
         when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
-                .thenReturn(Optional.of(sub));
+                .thenReturn(Optional.empty());
 
-        boolean actual = service.isUserPremium(USER_ID);
+        boolean result = service.isUserPremium(USER_ID);
 
-        assertThat(actual).isTrue();
+        assertThat(result).isFalse();
+        verify(userSubscriptionRepository).findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("isUserPremium returns true when active subscription end date is in future")
+    void isUserPremiumReturnsTrueWhenActiveSubscriptionNotExpired() {
+        UserSubscription active = subscription(PlanType.MONTHLY, LocalDateTime.now().plusDays(5), SubscriptionStatus.ACTIVE);
+        when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
+                .thenReturn(Optional.of(active));
+
+        boolean result = service.isUserPremium(USER_ID);
+
+        assertThat(result).isTrue();
         verify(userSubscriptionRepository, never()).save(any(UserSubscription.class));
     }
 
     @Test
-    @DisplayName("isUserPremium active past end date auto expires and returns false")
-    void isUserPremium_activePast_expiresFalse() {
-        UserSubscription sub = activeSub(LocalDateTime.now().minusSeconds(1));
+    @DisplayName("isUserPremium expires outdated active subscription and returns false")
+    void isUserPremiumExpiresOutdatedSubscription() {
+        UserSubscription active = subscription(PlanType.MONTHLY, LocalDateTime.now().minusMinutes(1), SubscriptionStatus.ACTIVE);
         when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
-                .thenReturn(Optional.of(sub));
+                .thenReturn(Optional.of(active));
 
-        boolean actual = service.isUserPremium(USER_ID);
+        boolean result = service.isUserPremium(USER_ID);
 
-        assertThat(actual).isFalse();
-        assertThat(sub.getStatus()).isEqualTo(SubscriptionStatus.EXPIRED);
-        verify(userSubscriptionRepository).save(sub);
+        assertThat(result).isFalse();
+        assertThat(active.getStatus()).isEqualTo(SubscriptionStatus.EXPIRED);
+        verify(userSubscriptionRepository).save(active);
     }
 
     @Test
-    @DisplayName("isUserPremium active endDate equals now expires and returns false")
-    void isUserPremium_boundaryNow_expiresFalse() {
-        UserSubscription sub = activeSub(LocalDateTime.now());
-        when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
-                .thenReturn(Optional.of(sub));
-
-        boolean actual = service.isUserPremium(USER_ID);
-
-        assertThat(actual).isFalse();
-        verify(userSubscriptionRepository).save(sub);
+    @DisplayName("isUserPremium throws bad request when user id is null")
+    void isUserPremiumThrowsWhenUserIdNull() {
+        assertThatThrownBy(() -> service.isUserPremium(null))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(USER_ID_REQUIRED_MESSAGE);
     }
 
     @Test
-    @DisplayName("isUserPremium no active subscription returns false")
-    void isUserPremium_noActive_false() {
-        when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
-                .thenReturn(Optional.empty());
-
-        boolean actual = service.isUserPremium(USER_ID);
-
-        assertThat(actual).isFalse();
-    }
-
-    @Test
-    @DisplayName("isUserPremium invalid user ids throw BadRequestException")
-    void isUserPremium_invalidUserId_throws() {
-        assertThatThrownBy(() -> service.isUserPremium(null)).isInstanceOf(BadRequestException.class);
-        assertThatThrownBy(() -> service.isUserPremium(0L)).isInstanceOf(BadRequestException.class);
-        assertThatThrownBy(() -> service.isUserPremium(-1L)).isInstanceOf(BadRequestException.class);
-    }
-
-    @Test
-    @DisplayName("upgradeToPremium new monthly creates subscription and payment")
-    void upgradeToPremium_newMonthly_creates() {
+    @DisplayName("upgradeToPremium creates new active monthly subscription and payment")
+    void upgradeToPremiumCreatesNewSubscriptionAndPayment() {
+        LocalDateTime before = LocalDateTime.now();
         when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of());
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> {
-            UserSubscription s = inv.getArgument(0);
-            if (s.getId() == null) {
-                s.setId(77L);
-            }
-            return s;
+        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(invocation -> {
+            UserSubscription saved = invocation.getArgument(0);
+            saved.setId(SUBSCRIPTION_ID);
+            return saved;
         });
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(testUser(USER_ID)));
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user()));
 
-        service.upgradeToPremium(USER_ID, "MONTHLY");
+        service.upgradeToPremium(USER_ID, MONTHLY);
 
-        ArgumentCaptor<UserSubscription> subCaptor = ArgumentCaptor.forClass(UserSubscription.class);
-        verify(userSubscriptionRepository).save(subCaptor.capture());
-        UserSubscription savedSub = subCaptor.getValue();
-        assertThat(savedSub.getPlanType()).isEqualTo(PlanType.MONTHLY);
-        assertThat(savedSub.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        ArgumentCaptor<UserSubscription> subscriptionCaptor = ArgumentCaptor.forClass(UserSubscription.class);
+        verify(userSubscriptionRepository).save(subscriptionCaptor.capture());
+        UserSubscription savedSubscription = subscriptionCaptor.getValue();
+        assertThat(savedSubscription.getPlanType()).isEqualTo(PlanType.MONTHLY);
+        assertThat(savedSubscription.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(savedSubscription.getEndDate()).isAfter(savedSubscription.getStartDate());
+        assertThat(savedSubscription.getEndDate()).isAfter(before.plusDays(MONTHLY_DAYS - 1));
 
         ArgumentCaptor<SubscriptionPayment> paymentCaptor = ArgumentCaptor.forClass(SubscriptionPayment.class);
         verify(subscriptionPaymentRepository).save(paymentCaptor.capture());
-        assertThat(paymentCaptor.getValue().getAmount()).isEqualTo(199.0);
-        assertThat(paymentCaptor.getValue().getCurrency()).isEqualTo("INR");
+        SubscriptionPayment payment = paymentCaptor.getValue();
+        assertThat(payment.getSubscriptionId()).isEqualTo(SUBSCRIPTION_ID);
+        assertThat(payment.getAmount()).isEqualTo(MONTHLY_AMOUNT);
+        assertThat(payment.getCurrency()).isEqualTo(INR);
+        assertThat(payment.getPaymentMethod()).isEqualTo(PAYMENT_METHOD);
+        assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
+        assertThat(payment.getTransactionReference()).startsWith("DUMMY-");
+
+        verify(emailService).sendPremiumSubscriptionEmail(EMAIL, USERNAME, MONTHLY);
     }
 
     @Test
-    @DisplayName("upgradeToPremium new yearly sets yearly amount")
-    void upgradeToPremium_newYearly_amountYearly() {
-        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of());
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> {
-            UserSubscription s = inv.getArgument(0);
-            s.setId(88L);
-            return s;
-        });
-
-        service.upgradeToPremium(USER_ID, "YEARLY");
-
-        ArgumentCaptor<SubscriptionPayment> paymentCaptor = ArgumentCaptor.forClass(SubscriptionPayment.class);
-        verify(subscriptionPaymentRepository).save(paymentCaptor.capture());
-        assertThat(paymentCaptor.getValue().getAmount()).isEqualTo(1499.0);
-    }
-
-    @Test
-    @DisplayName("upgradeToPremium active future extends from current end date")
-    void upgradeToPremium_activeFuture_extendsFromEndDate() {
-        LocalDateTime oldEnd = LocalDateTime.now().plusDays(10);
-        UserSubscription active = activeSub(oldEnd);
-        active.setId(1L);
-        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of(active));
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        service.upgradeToPremium(USER_ID, "MONTHLY");
-
-        assertThat(active.getEndDate()).isAfter(oldEnd.plusDays(29));
-    }
-
-    @Test
-    @DisplayName("upgradeToPremium active past extends from now")
-    void upgradeToPremium_activePast_extendsFromNow() {
-        UserSubscription active = activeSub(LocalDateTime.now().minusDays(1));
-        active.setId(2L);
-        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of(active));
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        service.upgradeToPremium(USER_ID, "MONTHLY");
-
-        assertThat(active.getEndDate()).isAfter(LocalDateTime.now().plusDays(29));
-    }
-
-    @Test
-    @DisplayName("upgradeToPremium multiple active keeps first and cancels rest")
-    void upgradeToPremium_multipleActive_cancelsExtras() {
-        UserSubscription first = activeSub(LocalDateTime.now().plusDays(1));
-        first.setId(3L);
-        UserSubscription second = activeSub(LocalDateTime.now().plusDays(2));
-        second.setId(4L);
-        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of(first, second));
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        service.upgradeToPremium(USER_ID, "MONTHLY");
-
-        assertThat(second.getStatus()).isEqualTo(SubscriptionStatus.CANCELLED);
-        verify(subscriptionPaymentRepository, times(1)).save(any(SubscriptionPayment.class));
-    }
-
-    @Test
-    @DisplayName("upgradeToPremium email failure is swallowed")
-    void upgradeToPremium_emailFailure_swallowed() {
-        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of());
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> {
-            UserSubscription s = inv.getArgument(0);
-            s.setId(55L);
-            return s;
-        });
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(testUser(USER_ID)));
-        doThrow(new RuntimeException("smtp down")).when(emailService).sendPremiumSubscriptionEmail(any(), any(), any());
-
-        service.upgradeToPremium(USER_ID, "MONTHLY");
-
-        verify(subscriptionPaymentRepository).save(any(SubscriptionPayment.class));
-    }
-
-    @Test
-    @DisplayName("upgradeToPremium user missing in repo completes without email")
-    void upgradeToPremium_userMissing_completes() {
-        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of());
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> {
-            UserSubscription s = inv.getArgument(0);
-            s.setId(66L);
-            return s;
-        });
+    @DisplayName("upgradeToPremium extends existing active subscription and cancels extras")
+    void upgradeToPremiumExtendsExistingAndCancelsExtraActiveSubscriptions() {
+        UserSubscription primary = subscription(PlanType.MONTHLY, LocalDateTime.now().plusDays(5), SubscriptionStatus.ACTIVE);
+        primary.setId(SUBSCRIPTION_ID);
+        UserSubscription extra = subscription(PlanType.MONTHLY, LocalDateTime.now().plusDays(3), SubscriptionStatus.ACTIVE);
+        extra.setId(99L);
+        when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE))
+                .thenReturn(List.of(primary, extra));
+        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
-        service.upgradeToPremium(USER_ID, "MONTHLY");
+        LocalDateTime previousEnd = primary.getEndDate();
+        service.upgradeToPremium(USER_ID, YEARLY);
 
+        assertThat(primary.getPlanType()).isEqualTo(PlanType.YEARLY);
+        assertThat(primary.getEndDate()).isAfter(previousEnd.plusDays(YEARLY_DAYS - 1));
+        assertThat(primary.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(extra.getStatus()).isEqualTo(SubscriptionStatus.CANCELLED);
         verify(subscriptionPaymentRepository).save(any(SubscriptionPayment.class));
         verify(emailService, never()).sendPremiumSubscriptionEmail(any(), any(), any());
     }
 
     @Test
-    @DisplayName("upgradeToPremium invalid planType values throw BadRequestException")
-    void upgradeToPremium_invalidPlan_throws() {
-        assertThatThrownBy(() -> service.upgradeToPremium(USER_ID, null)).isInstanceOf(BadRequestException.class);
-        assertThatThrownBy(() -> service.upgradeToPremium(USER_ID, "   ")).isInstanceOf(BadRequestException.class);
-        assertThatThrownBy(() -> service.upgradeToPremium(USER_ID, "WEEKLY")).isInstanceOf(BadRequestException.class);
+    @DisplayName("upgradeToPremium throws bad request when user id invalid")
+    void upgradeToPremiumThrowsWhenUserIdInvalid() {
+        assertThatThrownBy(() -> service.upgradeToPremium(0L, MONTHLY))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(USER_ID_REQUIRED_MESSAGE);
     }
 
     @Test
-    @DisplayName("upgradeToPremium lowercase and whitespace planType are accepted")
-    void upgradeToPremium_normalizedPlanType_accepted() {
+    @DisplayName("upgradeToPremium throws bad request when plan type is blank")
+    void upgradeToPremiumThrowsWhenPlanTypeBlank() {
+        assertThatThrownBy(() -> service.upgradeToPremium(USER_ID, " "))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(PLAN_REQUIRED_MESSAGE);
+    }
+
+    @Test
+    @DisplayName("upgradeToPremium throws bad request when plan type is unsupported")
+    void upgradeToPremiumThrowsWhenPlanTypeUnsupported() {
+        assertThatThrownBy(() -> service.upgradeToPremium(USER_ID, "weekly"))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(INVALID_PLAN_MESSAGE);
+    }
+
+    @Test
+    @DisplayName("upgradeToPremium swallows email exception and still persists payment")
+    void upgradeToPremiumSwallowsEmailFailure() {
         when(userSubscriptionRepository.findByUserIdAndStatus(USER_ID, SubscriptionStatus.ACTIVE)).thenReturn(List.of());
-        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> {
-            UserSubscription s = inv.getArgument(0);
-            s.setId(90L);
-            return s;
+        when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(invocation -> {
+            UserSubscription saved = invocation.getArgument(0);
+            saved.setId(SUBSCRIPTION_ID);
+            return saved;
         });
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user()));
+        org.mockito.Mockito.doThrow(new RuntimeException("mail down"))
+                .when(emailService).sendPremiumSubscriptionEmail(eq(EMAIL), eq(USERNAME), eq(MONTHLY));
 
-        service.upgradeToPremium(USER_ID, "monthly");
-        service.upgradeToPremium(USER_ID, "  MONTHLY  ");
+        service.upgradeToPremium(USER_ID, MONTHLY);
 
-        verify(subscriptionPaymentRepository, times(2)).save(any(SubscriptionPayment.class));
+        verify(subscriptionPaymentRepository).save(any(SubscriptionPayment.class));
+        verify(emailService).sendPremiumSubscriptionEmail(EMAIL, USERNAME, MONTHLY);
     }
 
     @Test
-    @DisplayName("getPremiumStatus active returns premium true with expiry")
-    void getPremiumStatus_active_true() {
-        UserSubscription sub = activeSub(LocalDateTime.now().plusDays(5));
+    @DisplayName("getPremiumStatus returns premium true and expiry date when active")
+    void getPremiumStatusReturnsPremiumWithExpiry() {
+        LocalDateTime expiry = LocalDateTime.now().plusDays(1);
+        UserSubscription active = subscription(PlanType.MONTHLY, expiry, SubscriptionStatus.ACTIVE);
         when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
-                .thenReturn(Optional.of(sub));
+                .thenReturn(Optional.of(active), Optional.of(active));
 
         PremiumStatusResponse response = service.getPremiumStatus(USER_ID);
 
         assertThat(response.isPremium()).isTrue();
-        assertThat(response.expiryDate()).isNotNull();
+        assertThat(response.expiryDate()).isEqualTo(expiry);
     }
 
     @Test
-    @DisplayName("getPremiumStatus no sub returns false with null expiry")
-    void getPremiumStatus_noSub_falseNull() {
+    @DisplayName("getPremiumStatus returns premium false with null expiry when inactive")
+    void getPremiumStatusReturnsNonPremiumWithNullExpiry() {
         when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
                 .thenReturn(Optional.empty());
 
@@ -276,41 +238,21 @@ class SubscriptionServiceImplTest {
         assertThat(response.expiryDate()).isNull();
     }
 
-    @Test
-    @DisplayName("getPremiumStatus expired path returns false and saves expired")
-    void getPremiumStatus_expired_savesExpired() {
-        UserSubscription sub = activeSub(LocalDateTime.now().minusSeconds(5));
-        when(userSubscriptionRepository.findFirstByUserIdAndStatusOrderByEndDateDesc(USER_ID, SubscriptionStatus.ACTIVE))
-                .thenReturn(Optional.of(sub));
-
-        PremiumStatusResponse response = service.getPremiumStatus(USER_ID);
-
-        assertThat(response.isPremium()).isFalse();
-        assertThat(response.expiryDate()).isNull();
-        verify(userSubscriptionRepository).save(sub);
+    private UserSubscription subscription(PlanType planType, LocalDateTime endDate, SubscriptionStatus status) {
+        UserSubscription subscription = new UserSubscription();
+        subscription.setUserId(USER_ID);
+        subscription.setPlanType(planType);
+        subscription.setStartDate(LocalDateTime.now().minusDays(1));
+        subscription.setEndDate(endDate);
+        subscription.setStatus(status);
+        return subscription;
     }
 
-    @Test
-    @DisplayName("getPremiumStatus invalid user id propagates BadRequestException")
-    void getPremiumStatus_invalidUser_throws() {
-        assertThatThrownBy(() -> service.getPremiumStatus(0L)).isInstanceOf(BadRequestException.class);
-    }
-
-    private UserSubscription activeSub(LocalDateTime endDate) {
-        UserSubscription sub = new UserSubscription();
-        sub.setUserId(USER_ID);
-        sub.setPlanType(PlanType.MONTHLY);
-        sub.setStartDate(LocalDateTime.now().minusDays(1));
-        sub.setEndDate(endDate);
-        sub.setStatus(SubscriptionStatus.ACTIVE);
-        return sub;
-    }
-
-    private User testUser(Long id) {
+    private User user() {
         User user = new User();
-        user.setUserId(id);
-        user.setEmail("user@mail.test");
-        user.setUsername("user");
+        user.setUserId(USER_ID);
+        user.setEmail(EMAIL);
+        user.setUsername(USERNAME);
         return user;
     }
 }

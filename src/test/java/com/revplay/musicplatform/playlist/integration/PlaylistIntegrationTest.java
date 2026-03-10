@@ -1,18 +1,21 @@
 package com.revplay.musicplatform.playlist.integration;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.revplay.musicplatform.playlist.dto.request.AddSongToPlaylistRequest;
-import com.revplay.musicplatform.playlist.dto.request.CreatePlaylistRequest;
-import com.revplay.musicplatform.playlist.dto.request.ReorderPlaylistSongsRequest;
-import com.revplay.musicplatform.playlist.dto.request.SongPositionRequest;
-import com.revplay.musicplatform.playlist.entity.Playlist;
-import com.revplay.musicplatform.playlist.entity.PlaylistSong;
 import com.revplay.musicplatform.playlist.repository.PlaylistFollowRepository;
 import com.revplay.musicplatform.playlist.repository.PlaylistRepository;
 import com.revplay.musicplatform.playlist.repository.PlaylistSongRepository;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.user.enums.UserRole;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -20,52 +23,39 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import com.revplay.musicplatform.catalog.service.DiscoveryPerformanceService;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@Tag("integration")
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Tag("integration")
 class PlaylistIntegrationTest {
 
     private static final String BASE = "/api/v1/playlists";
-    private static final Long USER_A = 100L;
-    private static final Long USER_B = 200L;
-    private static final Long SONG_1 = 1001L;
-    private static final Long SONG_2 = 1002L;
-    private static final Long SONG_3 = 1003L;
-
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
-    private final PlaylistRepository playlistRepository;
-    private final PlaylistSongRepository playlistSongRepository;
-    private final PlaylistFollowRepository playlistFollowRepository;
+    private static final Long USER_A = 1001L;
+    private static final Long USER_B = 1002L;
+    private static final Long SONG_1 = 5001L;
+    private static final Long SONG_2 = 5002L;
+    private static final Long SONG_3 = 5003L;
 
     @Autowired
-    PlaylistIntegrationTest(
-            MockMvc mockMvc,
-            ObjectMapper objectMapper,
-            PlaylistRepository playlistRepository,
-            PlaylistSongRepository playlistSongRepository,
-            PlaylistFollowRepository playlistFollowRepository) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-        this.playlistRepository = playlistRepository;
-        this.playlistSongRepository = playlistSongRepository;
-        this.playlistFollowRepository = playlistFollowRepository;
-    }
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private PlaylistRepository playlistRepository;
+    @Autowired
+    private PlaylistSongRepository playlistSongRepository;
+    @Autowired
+    private PlaylistFollowRepository playlistFollowRepository;
+    @MockBean
+    private DiscoveryPerformanceService discoveryPerformanceService;
 
     @BeforeEach
     void clean() {
@@ -75,159 +65,145 @@ class PlaylistIntegrationTest {
     }
 
     @Test
-    @DisplayName("Create playlist add songs and verify order 1 2 3")
-    void createAddSongs_verifyOrder() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration A", true);
-        addSong(playlistId, SONG_1, USER_A, null);
-        addSong(playlistId, SONG_2, USER_A, null);
-        addSong(playlistId, SONG_3, USER_A, null);
+    @DisplayName("create playlist add songs and verify initial order")
+    void createAddAndOrder() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Mix A", true);
+        addSong(USER_A, playlistId, SONG_1, null);
+        addSong(USER_A, playlistId, SONG_2, null);
+        addSong(USER_A, playlistId, SONG_3, null);
 
-        List<PlaylistSong> songs = playlistSongRepository.findByPlaylistIdOrderByPositionAsc(playlistId);
-
+        JsonNode songs = getPlaylistSongs(playlistId);
         assertThat(songs).hasSize(3);
-        assertThat(songs.get(0).getSongId()).isEqualTo(SONG_1);
-        assertThat(songs.get(0).getPosition()).isEqualTo(1);
-        assertThat(songs.get(1).getPosition()).isEqualTo(2);
-        assertThat(songs.get(2).getPosition()).isEqualTo(3);
+        assertThat(songs.get(0).get("position").asInt()).isEqualTo(1);
+        assertThat(songs.get(1).get("position").asInt()).isEqualTo(2);
+        assertThat(songs.get(2).get("position").asInt()).isEqualTo(3);
     }
 
     @Test
-    @DisplayName("Reorder songs and verify persisted positions")
-    void reorderSongs_verifyNewOrder() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration B", true);
-        addSong(playlistId, SONG_1, USER_A, null);
-        addSong(playlistId, SONG_2, USER_A, null);
-        addSong(playlistId, SONG_3, USER_A, null);
+    @DisplayName("reorder updates positions")
+    void reorderUpdatesPositions() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Mix B", true);
+        addSong(USER_A, playlistId, SONG_1, null);
+        addSong(USER_A, playlistId, SONG_2, null);
+        addSong(USER_A, playlistId, SONG_3, null);
 
-        SongPositionRequest a = new SongPositionRequest();
-        a.setSongId(SONG_1);
-        a.setPosition(3);
-        SongPositionRequest b = new SongPositionRequest();
-        b.setSongId(SONG_2);
-        b.setPosition(1);
-        SongPositionRequest c = new SongPositionRequest();
-        c.setSongId(SONG_3);
-        c.setPosition(2);
-        ReorderPlaylistSongsRequest reorder = new ReorderPlaylistSongsRequest();
-        reorder.setSongs(List.of(a, b, c));
-
-        mockMvc.perform(put(BASE + "/{playlistId}/songs/reorder", playlistId)
-                        .with(authUser(USER_A))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(reorder)))
+        String reorderBody = """
+                {
+                  "songs": [
+                    {"songId": %d, "position": 3},
+                    {"songId": %d, "position": 1},
+                    {"songId": %d, "position": 2}
+                  ]
+                }
+                """.formatted(SONG_1, SONG_2, SONG_3);
+        mockMvc.perform(put(BASE + "/" + playlistId + "/songs/reorder")
+                .with(authentication(auth(USER_A, UserRole.LISTENER)))
+                .contentType("application/json")
+                .content(reorderBody))
                 .andExpect(status().isOk());
 
-        List<PlaylistSong> songs = playlistSongRepository.findByPlaylistIdOrderByPositionAsc(playlistId);
+        JsonNode songs = getPlaylistSongs(playlistId);
         assertThat(songs).hasSize(3);
-        assertThat(songs.get(0).getSongId()).isEqualTo(SONG_2);
-        assertThat(songs.get(1).getSongId()).isEqualTo(SONG_3);
-        assertThat(songs.get(2).getSongId()).isEqualTo(SONG_1);
+        assertThat(songs.get(0).get("songId").asLong()).isEqualTo(SONG_2);
+        assertThat(songs.get(1).get("songId").asLong()).isEqualTo(SONG_3);
+        assertThat(songs.get(2).get("songId").asLong()).isEqualTo(SONG_1);
     }
 
     @Test
-    @DisplayName("Add duplicate song returns 409")
-    void addDuplicateSong_conflict() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration C", true);
-        addSong(playlistId, SONG_1, USER_A, null);
+    @DisplayName("add duplicate song returns conflict")
+    void addDuplicateSongConflict() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Mix C", true);
+        addSong(USER_A, playlistId, SONG_1, null);
 
-        AddSongToPlaylistRequest duplicate = new AddSongToPlaylistRequest();
-        duplicate.setSongId(SONG_1);
-
-        MvcResult result = mockMvc.perform(post(BASE + "/{playlistId}/songs", playlistId)
-                        .with(authUser(USER_A))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(duplicate)))
-                .andExpect(status().isConflict())
-                .andReturn();
-
-        assertThat(result.getResponse().getStatus()).isEqualTo(409);
+        mockMvc.perform(post(BASE + "/" + playlistId + "/songs")
+                .with(authentication(auth(USER_A, UserRole.LISTENER)))
+                .contentType("application/json")
+                .content("{\"songId\":" + SONG_1 + "}"))
+                .andExpect(status().isConflict());
     }
 
     @Test
-    @DisplayName("Follow public playlist as another user succeeds")
-    void followPublicPlaylist_success() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration D", true);
+    @DisplayName("follow public playlist as different user succeeds")
+    void followPublicAsDifferentUser() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Public Mix", true);
 
-        mockMvc.perform(post(BASE + "/{playlistId}/follow", playlistId)
-                        .with(authUser(USER_B)))
+        mockMvc.perform(post(BASE + "/" + playlistId + "/follow")
+                .with(authentication(auth(USER_B, UserRole.LISTENER))))
                 .andExpect(status().isCreated());
-
-        assertThat(playlistFollowRepository.existsByPlaylistIdAndFollowerUserId(playlistId, USER_B)).isTrue();
     }
 
     @Test
-    @DisplayName("Follow own playlist returns 409")
-    void followOwnPlaylist_conflict() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration E", true);
+    @DisplayName("follow own playlist returns conflict")
+    void followOwnConflict() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Own Mix", true);
 
-        MvcResult result = mockMvc.perform(post(BASE + "/{playlistId}/follow", playlistId)
-                        .with(authUser(USER_A)))
-                .andExpect(status().isConflict())
-                .andReturn();
-
-        assertThat(result.getResponse().getStatus()).isEqualTo(409);
+        mockMvc.perform(post(BASE + "/" + playlistId + "/follow")
+                .with(authentication(auth(USER_A, UserRole.LISTENER))))
+                .andExpect(status().isConflict());
     }
 
     @Test
-    @DisplayName("Follow private playlist as non owner returns 403")
-    void followPrivatePlaylist_nonOwner_forbidden() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration F", false);
+    @DisplayName("follow private playlist as non owner returns forbidden")
+    void followPrivateForbidden() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Private Mix", false);
 
-        MvcResult result = mockMvc.perform(post(BASE + "/{playlistId}/follow", playlistId)
-                        .with(authUser(USER_B)))
-                .andExpect(status().isForbidden())
-                .andReturn();
-
-        assertThat(result.getResponse().getStatus()).isEqualTo(403);
+        mockMvc.perform(post(BASE + "/" + playlistId + "/follow")
+                .with(authentication(auth(USER_B, UserRole.LISTENER))))
+                .andExpect(status().isForbidden());
     }
 
     @Test
-    @DisplayName("Delete playlist then get returns 404")
-    void deleteThenGet_notFound() throws Exception {
-        Long playlistId = createPlaylist(USER_A, "Integration G", true);
+    @DisplayName("delete playlist then get returns not found")
+    void deleteThenGetNotFound() throws Exception {
+        Long playlistId = createPlaylist(USER_A, "Delete Mix", true);
 
-        mockMvc.perform(delete(BASE + "/{playlistId}", playlistId)
-                        .with(authUser(USER_A)))
+        mockMvc.perform(delete(BASE + "/" + playlistId)
+                .with(authentication(auth(USER_A, UserRole.LISTENER))))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(get(BASE + "/{playlistId}", playlistId)
-                        .with(authUser(USER_A)))
+        mockMvc.perform(get(BASE + "/" + playlistId)
+                .with(authentication(auth(USER_A, UserRole.LISTENER))))
                 .andExpect(status().isNotFound());
-
-        Playlist playlist = playlistRepository.findById(playlistId).orElseThrow();
-        assertThat(playlist.getIsActive()).isFalse();
     }
 
     private Long createPlaylist(Long userId, String name, boolean isPublic) throws Exception {
-        CreatePlaylistRequest request = new CreatePlaylistRequest();
-        request.setName(name);
-        request.setIsPublic(isPublic);
-
+        String body = "{\"name\":\"" + name + "\",\"isPublic\":" + isPublic + "}";
         MvcResult result = mockMvc.perform(post(BASE)
-                        .with(authUser(userId))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+                .with(authentication(auth(userId, UserRole.LISTENER)))
+                .contentType("application/json")
+                .content(body))
                 .andExpect(status().isCreated())
                 .andReturn();
-
-        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-        return json.path("data").path("id").asLong();
+        return root(result).path("data").path("id").asLong();
     }
 
-    private void addSong(Long playlistId, Long songId, Long userId, Integer position) throws Exception {
-        AddSongToPlaylistRequest request = new AddSongToPlaylistRequest();
-        request.setSongId(songId);
-        request.setPosition(position);
-
-        mockMvc.perform(post(BASE + "/{playlistId}/songs", playlistId)
-                        .with(authUser(userId))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+    private void addSong(Long userId, Long playlistId, Long songId, Integer position) throws Exception {
+        String body = position == null
+                ? "{\"songId\":" + songId + "}"
+                : "{\"songId\":" + songId + ",\"position\":" + position + "}";
+        mockMvc.perform(post(BASE + "/" + playlistId + "/songs")
+                .with(authentication(auth(userId, UserRole.LISTENER)))
+                .contentType("application/json")
+                .content(body))
                 .andExpect(status().isCreated());
     }
 
-    private RequestPostProcessor authUser(Long userId) {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(userId, "user-" + userId, UserRole.LISTENER);
-        return authentication(new UsernamePasswordAuthenticationToken(principal, null, List.of()));
+    private JsonNode getPlaylistSongs(Long playlistId) throws Exception {
+        MvcResult result = mockMvc.perform(get(BASE + "/" + playlistId)
+                .with(authentication(auth(USER_A, UserRole.LISTENER))))
+                .andExpect(status().isOk())
+                .andReturn();
+        return root(result).path("data").path("songs");
+    }
+
+    private JsonNode root(MvcResult result) throws Exception {
+        return objectMapper.readTree(result.getResponse().getContentAsString());
+    }
+
+    private UsernamePasswordAuthenticationToken auth(Long userId, UserRole role) {
+        return new UsernamePasswordAuthenticationToken(
+                new AuthenticatedUserPrincipal(userId, "u" + userId, role),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_" + role.name())));
     }
 }

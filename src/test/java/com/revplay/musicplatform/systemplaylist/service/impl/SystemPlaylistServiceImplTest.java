@@ -1,5 +1,13 @@
 package com.revplay.musicplatform.systemplaylist.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.exception.DuplicateResourceException;
@@ -9,6 +17,8 @@ import com.revplay.musicplatform.systemplaylist.entity.SystemPlaylist;
 import com.revplay.musicplatform.systemplaylist.entity.SystemPlaylistSong;
 import com.revplay.musicplatform.systemplaylist.repository.SystemPlaylistRepository;
 import com.revplay.musicplatform.systemplaylist.repository.SystemPlaylistSongRepository;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -18,21 +28,25 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class SystemPlaylistServiceImplTest {
 
     private static final Long PLAYLIST_ID = 10L;
-    private static final String PLAYLIST_SLUG = "telugu-mix";
-    private static final String MISSING_SLUG = "missing";
+    private static final String PLAYLIST_SLUG = "focus-mix";
+    private static final String PLAYLIST_NAME = "Focus Mix";
+    private static final String PLAYLIST_DESCRIPTION = "Coding songs";
+    private static final Long SONG_ID_1 = 1L;
+    private static final Long SONG_ID_2 = 2L;
+    private static final Long SONG_ID_3 = 3L;
+    private static final Integer POSITION_ONE = 1;
+    private static final Integer POSITION_TWO = 2;
+    private static final Integer POSITION_THREE = 3;
+    private static final Integer POSITION_FOUR = 4;
+    private static final Integer POSITION_FIVE = 5;
+    private static final int SAVE_CALL_COUNT = 2;
+    private static final String EMPTY_SONG_IDS_MESSAGE = "songIds must not be empty";
+    private static final String DUPLICATE_SONG_IDS_MESSAGE = "songIds contains duplicates";
 
     @Mock
     private SystemPlaylistRepository systemPlaylistRepository;
@@ -45,58 +59,33 @@ class SystemPlaylistServiceImplTest {
     private SystemPlaylistServiceImpl service;
 
     @Test
-    @DisplayName("getAllActivePlaylists returns mapped responses")
-    void getAllActivePlaylists_hasItems_returnsMappedList() {
-        SystemPlaylist playlist = playlist(PLAYLIST_ID, PLAYLIST_SLUG, true);
-        playlist.setName("Telugu Mix");
-        playlist.setDescription("Top Telugu tracks mixed by RevPlay");
-        when(systemPlaylistRepository.findByIsActiveTrueAndDeletedAtIsNull()).thenReturn(List.of(playlist));
+    @DisplayName("getAllActivePlaylists maps active entities to response list")
+    void getAllActivePlaylistsMapsEntities() {
+        when(systemPlaylistRepository.findByIsActiveTrueAndDeletedAtIsNull()).thenReturn(List.of(playlist()));
 
-        List<SystemPlaylistResponse> responses = service.getAllActivePlaylists();
+        List<SystemPlaylistResponse> result = service.getAllActivePlaylists();
 
-        assertThat(responses).hasSize(1);
-        assertThat(responses.get(0).getSlug()).isEqualTo(PLAYLIST_SLUG);
-        assertThat(responses.get(0).getName()).isEqualTo("Telugu Mix");
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getId()).isEqualTo(PLAYLIST_ID);
+        assertThat(result.get(0).getSlug()).isEqualTo(PLAYLIST_SLUG);
     }
 
     @Test
-    @DisplayName("getAllActivePlaylists with none active returns empty list")
-    void getAllActivePlaylists_none_returnsEmptyList() {
-        when(systemPlaylistRepository.findByIsActiveTrueAndDeletedAtIsNull()).thenReturn(List.of());
-
-        List<SystemPlaylistResponse> responses = service.getAllActivePlaylists();
-
-        assertThat(responses).isEmpty();
-    }
-
-    @Test
-    @DisplayName("getSongIdsBySlug for valid active slug returns ordered song IDs")
-    void getSongIdsBySlug_validSlug_returnsOrderedSongIds() {
-        SystemPlaylist playlist = playlist(PLAYLIST_ID, PLAYLIST_SLUG, true);
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(playlist));
+    @DisplayName("getSongIdsBySlug returns ordered song ids for active playlist")
+    void getSongIdsBySlugReturnsOrderedSongIds() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(playlist()));
         when(systemPlaylistSongRepository.findBySystemPlaylistIdAndDeletedAtIsNullOrderByPositionAsc(PLAYLIST_ID))
-                .thenReturn(List.of(mapping(PLAYLIST_ID, 111L, 1), mapping(PLAYLIST_ID, 222L, 2)));
+                .thenReturn(List.of(mapping(SONG_ID_1, POSITION_ONE), mapping(SONG_ID_2, POSITION_TWO)));
 
-        List<Long> ids = service.getSongIdsBySlug(PLAYLIST_SLUG);
+        List<Long> songIds = service.getSongIdsBySlug(PLAYLIST_SLUG);
 
-        assertThat(ids).containsExactly(111L, 222L);
+        assertThat(songIds).containsExactly(SONG_ID_1, SONG_ID_2);
     }
 
     @Test
-    @DisplayName("getSongIdsBySlug for missing slug throws ResourceNotFoundException")
-    void getSongIdsBySlug_missingSlug_throwsNotFound() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(MISSING_SLUG)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.getSongIdsBySlug(MISSING_SLUG))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("System playlist not found: " + MISSING_SLUG);
-    }
-
-    @Test
-    @DisplayName("getSongIdsBySlug for inactive playlist throws ResourceNotFoundException")
-    void getSongIdsBySlug_inactive_throwsNotFound() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG))
-                .thenReturn(Optional.of(playlist(PLAYLIST_ID, PLAYLIST_SLUG, false)));
+    @DisplayName("getSongIdsBySlug throws when playlist is missing")
+    void getSongIdsBySlugThrowsWhenPlaylistMissing() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getSongIdsBySlug(PLAYLIST_SLUG))
                 .isInstanceOf(ResourceNotFoundException.class)
@@ -104,90 +93,99 @@ class SystemPlaylistServiceImplTest {
     }
 
     @Test
-    @DisplayName("addSongsBySlug with null list throws BadRequestException")
-    void addSongsBySlug_nullSongIds_throwsBadRequest() {
-        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, null))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessage("songIds must not be empty");
-    }
+    @DisplayName("getSongIdsBySlug throws when playlist is inactive")
+    void getSongIdsBySlugThrowsWhenPlaylistInactive() {
+        SystemPlaylist inactive = playlist();
+        inactive.setIsActive(false);
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(inactive));
 
-    @Test
-    @DisplayName("addSongsBySlug with duplicate song IDs throws BadRequestException")
-    void addSongsBySlug_duplicateInRequest_throwsBadRequest() {
-        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(1L, 1L)))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessage("songIds contains duplicates");
-    }
-
-    @Test
-    @DisplayName("addSongsBySlug with missing slug throws ResourceNotFoundException")
-    void addSongsBySlug_missingSlug_throwsNotFound() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(MISSING_SLUG)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.addSongsBySlug(MISSING_SLUG, List.of(1L)))
+        assertThatThrownBy(() -> service.getSongIdsBySlug(PLAYLIST_SLUG))
                 .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("System playlist not found: " + MISSING_SLUG);
+                .hasMessage("System playlist not found: " + PLAYLIST_SLUG);
     }
 
     @Test
-    @DisplayName("addSongsBySlug with missing song throws ResourceNotFoundException")
-    void addSongsBySlug_songMissing_throwsNotFound() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG))
-                .thenReturn(Optional.of(playlist(PLAYLIST_ID, PLAYLIST_SLUG, true)));
+    @DisplayName("addSongsBySlug throws when song ids are empty")
+    void addSongsBySlugThrowsWhenSongIdsEmpty() {
+        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of()))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(EMPTY_SONG_IDS_MESSAGE);
+    }
+
+    @Test
+    @DisplayName("addSongsBySlug throws when song ids contain duplicates")
+    void addSongsBySlugThrowsWhenSongIdsDuplicate() {
+        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(SONG_ID_1, SONG_ID_1)))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(DUPLICATE_SONG_IDS_MESSAGE);
+    }
+
+    @Test
+    @DisplayName("addSongsBySlug throws when playlist does not exist")
+    void addSongsBySlugThrowsWhenPlaylistMissing() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(SONG_ID_1)))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("System playlist not found: " + PLAYLIST_SLUG);
+    }
+
+    @Test
+    @DisplayName("addSongsBySlug throws when song does not exist")
+    void addSongsBySlugThrowsWhenSongMissing() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(playlist()));
         when(systemPlaylistSongRepository.findBySystemPlaylistIdAndDeletedAtIsNullOrderByPositionAsc(PLAYLIST_ID))
                 .thenReturn(List.of());
-        when(songRepository.existsById(999L)).thenReturn(false);
+        when(songRepository.existsById(SONG_ID_1)).thenReturn(false);
 
-        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(999L)))
+        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(SONG_ID_1)))
                 .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("Song not found: 999");
+                .hasMessage("Song not found: " + SONG_ID_1);
     }
 
     @Test
-    @DisplayName("addSongsBySlug when song already exists throws DuplicateResourceException")
-    void addSongsBySlug_songAlreadyInPlaylist_throwsDuplicate() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG))
-                .thenReturn(Optional.of(playlist(PLAYLIST_ID, PLAYLIST_SLUG, true)));
+    @DisplayName("addSongsBySlug throws when song already exists in playlist")
+    void addSongsBySlugThrowsWhenSongAlreadyMapped() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(playlist()));
         when(systemPlaylistSongRepository.findBySystemPlaylistIdAndDeletedAtIsNullOrderByPositionAsc(PLAYLIST_ID))
                 .thenReturn(List.of());
-        when(songRepository.existsById(100L)).thenReturn(true);
-        when(systemPlaylistSongRepository.existsBySystemPlaylistIdAndSongIdAndDeletedAtIsNull(PLAYLIST_ID, 100L))
+        when(songRepository.existsById(SONG_ID_1)).thenReturn(true);
+        when(systemPlaylistSongRepository.existsBySystemPlaylistIdAndSongIdAndDeletedAtIsNull(PLAYLIST_ID, SONG_ID_1))
                 .thenReturn(true);
 
-        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(100L)))
+        assertThatThrownBy(() -> service.addSongsBySlug(PLAYLIST_SLUG, List.of(SONG_ID_1)))
                 .isInstanceOf(DuplicateResourceException.class)
-                .hasMessage("Song already exists in system playlist: 100");
+                .hasMessage("Song already exists in system playlist: " + SONG_ID_1);
     }
 
     @Test
-    @DisplayName("addSongsBySlug with existing songs appends using sequential positions")
-    void addSongsBySlug_existingMappings_appendsSequentialPositions() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG))
-                .thenReturn(Optional.of(playlist(PLAYLIST_ID, PLAYLIST_SLUG, true)));
+    @DisplayName("addSongsBySlug appends songs using next position")
+    void addSongsBySlugAppendsSongsUsingNextPosition() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(playlist()));
         when(systemPlaylistSongRepository.findBySystemPlaylistIdAndDeletedAtIsNullOrderByPositionAsc(PLAYLIST_ID))
-                .thenReturn(List.of(mapping(PLAYLIST_ID, 10L, 1), mapping(PLAYLIST_ID, 20L, 2)));
-        when(songRepository.existsById(30L)).thenReturn(true);
-        when(songRepository.existsById(40L)).thenReturn(true);
-        when(systemPlaylistSongRepository.existsBySystemPlaylistIdAndSongIdAndDeletedAtIsNull(PLAYLIST_ID, 30L))
+                .thenReturn(List.of(mapping(SONG_ID_3, POSITION_THREE)));
+        when(songRepository.existsById(SONG_ID_1)).thenReturn(true);
+        when(songRepository.existsById(SONG_ID_2)).thenReturn(true);
+        when(systemPlaylistSongRepository.existsBySystemPlaylistIdAndSongIdAndDeletedAtIsNull(PLAYLIST_ID, SONG_ID_1))
                 .thenReturn(false);
-        when(systemPlaylistSongRepository.existsBySystemPlaylistIdAndSongIdAndDeletedAtIsNull(PLAYLIST_ID, 40L))
+        when(systemPlaylistSongRepository.existsBySystemPlaylistIdAndSongIdAndDeletedAtIsNull(PLAYLIST_ID, SONG_ID_2))
                 .thenReturn(false);
 
-        service.addSongsBySlug(PLAYLIST_SLUG, List.of(30L, 40L));
+        service.addSongsBySlug(PLAYLIST_SLUG, List.of(SONG_ID_1, SONG_ID_2));
 
         ArgumentCaptor<SystemPlaylistSong> captor = ArgumentCaptor.forClass(SystemPlaylistSong.class);
-        verify(systemPlaylistSongRepository, times(2)).save(captor.capture());
-
+        verify(systemPlaylistSongRepository, times(SAVE_CALL_COUNT)).save(captor.capture());
         List<SystemPlaylistSong> saved = captor.getAllValues();
-        assertThat(saved).hasSize(2);
-        assertThat(saved.get(0).getPosition()).isEqualTo(3);
-        assertThat(saved.get(1).getPosition()).isEqualTo(4);
+        assertThat(saved.get(0).getSongId()).isEqualTo(SONG_ID_1);
+        assertThat(saved.get(0).getPosition()).isEqualTo(POSITION_FOUR);
+        assertThat(saved.get(1).getSongId()).isEqualTo(SONG_ID_2);
+        assertThat(saved.get(1).getPosition()).isEqualTo(POSITION_FIVE);
     }
 
     @Test
-    @DisplayName("softDeletePlaylist sets inactive and deletedAt")
-    void softDeletePlaylist_found_setsInactiveAndDeletedAt() {
-        SystemPlaylist playlist = playlist(PLAYLIST_ID, PLAYLIST_SLUG, true);
+    @DisplayName("softDeletePlaylist marks playlist inactive and sets deletedAt")
+    void softDeletePlaylistMarksInactive() {
+        SystemPlaylist playlist = playlist();
         when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.of(playlist));
 
         service.softDeletePlaylist(PLAYLIST_SLUG);
@@ -198,31 +196,29 @@ class SystemPlaylistServiceImplTest {
     }
 
     @Test
-    @DisplayName("softDeletePlaylist for unknown slug throws ResourceNotFoundException")
-    void softDeletePlaylist_missingSlug_throwsNotFound() {
-        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(MISSING_SLUG)).thenReturn(Optional.empty());
+    @DisplayName("softDeletePlaylist throws when playlist does not exist")
+    void softDeletePlaylistThrowsWhenMissing() {
+        when(systemPlaylistRepository.findBySlugAndDeletedAtIsNull(PLAYLIST_SLUG)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.softDeletePlaylist(MISSING_SLUG))
+        assertThatThrownBy(() -> service.softDeletePlaylist(PLAYLIST_SLUG))
                 .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("System playlist not found: " + MISSING_SLUG);
-        verify(systemPlaylistRepository, never()).save(any());
+                .hasMessage("System playlist not found: " + PLAYLIST_SLUG);
+        verify(systemPlaylistRepository, never()).save(any(SystemPlaylist.class));
     }
 
-    private SystemPlaylist playlist(Long id, String slug, boolean isActive) {
+    private SystemPlaylist playlist() {
         SystemPlaylist playlist = new SystemPlaylist();
-        playlist.setId(id);
-        playlist.setSlug(slug);
-        playlist.setName("Mix");
-        playlist.setDescription("desc");
-        playlist.setIsActive(isActive);
+        playlist.setId(PLAYLIST_ID);
+        playlist.setSlug(PLAYLIST_SLUG);
+        playlist.setName(PLAYLIST_NAME);
+        playlist.setDescription(PLAYLIST_DESCRIPTION);
+        playlist.setIsActive(true);
         return playlist;
     }
 
-    private SystemPlaylistSong mapping(Long playlistId, Long songId, Integer position) {
+    private SystemPlaylistSong mapping(Long songId, Integer position) {
         SystemPlaylistSong mapping = new SystemPlaylistSong();
-        SystemPlaylist playlist = new SystemPlaylist();
-        playlist.setId(playlistId);
-        mapping.setSystemPlaylist(playlist);
+        mapping.setSystemPlaylist(playlist());
         mapping.setSongId(songId);
         mapping.setPosition(position);
         return mapping;
