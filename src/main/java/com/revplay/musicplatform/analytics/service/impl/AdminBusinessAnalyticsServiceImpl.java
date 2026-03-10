@@ -49,6 +49,8 @@ public class AdminBusinessAnalyticsServiceImpl implements AdminBusinessAnalytics
     private static final String TOP_DOWNLOADS_SQL = """
             SELECT sd.song_id, COUNT(*) AS download_count
             FROM song_downloads sd
+            JOIN songs s ON s.song_id = sd.song_id
+            WHERE s.is_active = true
             GROUP BY sd.song_id
             ORDER BY download_count DESC, sd.song_id ASC
             LIMIT ?

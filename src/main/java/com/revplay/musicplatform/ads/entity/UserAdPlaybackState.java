@@ -24,5 +24,7 @@ public class UserAdPlaybackState {
 
     @Column(name = "songs_played_count", nullable = false)
     private Integer songsPlayedCount;
-}
 
+    @Column(name = "last_served_ad_id")
+    private Long lastServedAdId;
+}

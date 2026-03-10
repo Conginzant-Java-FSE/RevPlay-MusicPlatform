@@ -9,8 +9,8 @@ import com.revplay.musicplatform.ads.repository.UserAdPlaybackStateRepository;
 import com.revplay.musicplatform.ads.service.AdService;
 import com.revplay.musicplatform.exception.BadRequestException;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -60,13 +60,18 @@ public class AdServiceImpl implements AdService {
         }
 
         LocalDateTime now = LocalDateTime.now();
-        List<Ad> activeAds = adRepository.findByIsActiveTrueAndStartDateBeforeAndEndDateAfter(now, now);
+        List<Ad> activeAds = adRepository.findByIsActiveTrueAndStartDateBeforeAndEndDateAfter(now, now).stream()
+                .sorted(Comparator.comparing(Ad::getId))
+                .toList();
         if (activeAds.isEmpty()) {
             LOGGER.info("No active ads available for userId={}, songId={}", userId, songId);
             return null;
         }
 
-        Ad selectedAd = activeAds.get(ThreadLocalRandom.current().nextInt(activeAds.size()));
+        Ad selectedAd = getNextAdInRotation(activeAds, state.getLastServedAdId());
+        state.setLastServedAdId(selectedAd.getId());
+        userAdPlaybackStateRepository.save(state);
+
         AdImpression impression = new AdImpression();
         impression.setAdId(selectedAd.getId());
         impression.setUserId(userId);
@@ -77,5 +82,22 @@ public class AdServiceImpl implements AdService {
         LOGGER.info("Ad selected for playback: adId={}, userId={}, songId={}", selectedAd.getId(), userId, songId);
         return selectedAd;
     }
-}
 
+    private Ad getNextAdInRotation(List<Ad> activeAds, Long lastServedAdId) {
+        if (activeAds.size() == 1) {
+            return activeAds.getFirst();
+        }
+
+        if (lastServedAdId == null) {
+            return activeAds.getFirst();
+        }
+
+        for (int index = 0; index < activeAds.size(); index++) {
+            if (activeAds.get(index).getId().equals(lastServedAdId)) {
+                return activeAds.get((index + 1) % activeAds.size());
+            }
+        }
+
+        return activeAds.getFirst();
+    }
+}

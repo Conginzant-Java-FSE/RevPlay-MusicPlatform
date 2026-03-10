@@ -8,7 +8,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SongRepository extends JpaRepository<Song, Long> {
-    Page<Song> findByArtistId(Long artistId, Pageable pageable);
+    Page<Song> findByArtistIdAndIsActiveTrue(Long artistId, Pageable pageable);
+    boolean existsBySongIdAndIsActiveTrue(Long songId);
     long countByAlbumId(Long albumId);
     long countByArtistId(Long artistId);
     boolean existsByAlbumIdAndTitleIgnoreCaseAndIsActiveTrue(Long albumId, String title);

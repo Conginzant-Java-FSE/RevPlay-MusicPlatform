@@ -34,6 +34,7 @@ public class PlaybackAnalyticsServiceImpl implements PlaybackAnalyticsService {
             FROM play_history ph
             JOIN songs s ON s.song_id = ph.song_id
             WHERE ph.played_at >= ?
+              AND s.is_active = true
             GROUP BY s.song_id, s.title
             ORDER BY play_count DESC
             LIMIT ?
@@ -51,6 +52,7 @@ public class PlaybackAnalyticsServiceImpl implements PlaybackAnalyticsService {
             SELECT 'song' AS type, s.song_id AS content_id, s.title, COUNT(ph.play_id) AS play_count
             FROM play_history ph
             JOIN songs s ON s.song_id = ph.song_id
+            WHERE s.is_active = true
             GROUP BY s.song_id, s.title
             ORDER BY play_count DESC
             LIMIT ?

@@ -112,7 +112,7 @@ public class SongServiceImpl implements SongService {
     @Override
     public Page<SongResponse> listByArtist(Long artistId, Pageable pageable) {
         log.info("Listing songs for artistId={} page={}", artistId, pageable.getPageNumber());
-        return songRepository.findByArtistId(artistId, pageable)
+        return songRepository.findByArtistIdAndIsActiveTrue(artistId, pageable)
             .map(mapper::toResponse);
     }
 

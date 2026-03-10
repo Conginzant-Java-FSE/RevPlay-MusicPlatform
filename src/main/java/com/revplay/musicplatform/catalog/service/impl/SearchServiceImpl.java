@@ -247,6 +247,7 @@ public class SearchServiceImpl implements SearchService {
                 JOIN artists a ON a.artist_id = s.artist_id
                 LEFT JOIN song_genres sg ON sg.song_id = s.song_id
                 WHERE (LOWER(s.title) LIKE ? OR LOWER(a.display_name) LIKE ?)
+                  AND s.is_active = true
                 """);
         List<Object> params = new ArrayList<>();
         params.add(query);
@@ -344,13 +345,13 @@ public class SearchServiceImpl implements SearchService {
                     NULL AS artist_id,
                     NULL AS artist_name,
                     NULL AS artist_type,
-                    p.release_date
+                    DATE(p.created_at) AS release_date
                 FROM podcasts p
                 WHERE LOWER(p.title) LIKE ?
                 """);
         List<Object> params = new ArrayList<>();
         params.add(query);
-        appendReleaseFilters(sql, params, releaseDateFrom, releaseDateTo, "p.release_date");
+        appendReleaseFilters(sql, params, releaseDateFrom, releaseDateTo, "DATE(p.created_at)");
         sql.append(" ORDER BY ").append(resolvePodcastSortColumn(sortBy)).append(" ").append(sortDir)
                 .append(", p.podcast_id ASC LIMIT ? OFFSET ?");
         params.add(size);
@@ -398,6 +399,7 @@ public class SearchServiceImpl implements SearchService {
                 JOIN artists a ON a.artist_id = s.artist_id
                 LEFT JOIN song_genres sg ON sg.song_id = s.song_id
                 WHERE (LOWER(s.title) LIKE ? OR LOWER(a.display_name) LIKE ?)
+                  AND s.is_active = true
                 """);
         List<Object> params = new ArrayList<>();
         params.add(query);
@@ -446,7 +448,7 @@ public class SearchServiceImpl implements SearchService {
                 """);
         List<Object> params = new ArrayList<>();
         params.add(query);
-        appendReleaseFilters(sql, params, releaseDateFrom, releaseDateTo, "p.release_date");
+        appendReleaseFilters(sql, params, releaseDateFrom, releaseDateTo, "DATE(p.created_at)");
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count;
     }
@@ -592,7 +594,7 @@ public class SearchServiceImpl implements SearchService {
         return switch (sortBy) {
             case "title" -> "p.title";
             case "contentId" -> "p.podcast_id";
-            default -> "p.release_date";
+            default -> "p.created_at";
         };
     }
 
