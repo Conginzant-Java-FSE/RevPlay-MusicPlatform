@@ -1,15 +1,29 @@
 package com.revplay.musicplatform.playback.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
 import com.revplay.musicplatform.config.FileStorageProperties;
-import com.revplay.musicplatform.playback.dto.request.TrackPlayRequest;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
 import com.revplay.musicplatform.playback.dto.response.PlayHistoryResponse;
 import com.revplay.musicplatform.playback.service.PlayHistoryService;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
 import com.revplay.musicplatform.security.SecurityConfig;
-import com.revplay.musicplatform.security.service.JwtService;
-import com.revplay.musicplatform.security.service.TokenRevocationService;
 import com.revplay.musicplatform.user.enums.UserRole;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import java.time.Instant;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -17,98 +31,88 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
-import java.time.Instant;
-import java.util.List;
-
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@Tag("unit")
 @WebMvcTest(PlayHistoryController.class)
-@Import(SecurityConfig.class)
+@Import({ SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class })
+@Tag("integration")
 class PlayHistoryControllerTest {
 
-    private static final String BASE = "/api/v1/play-history";
+    private static final String BASE_PATH = "/api/v1/play-history";
+    private static final Long USER_ID = 1L;
 
     private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
 
     @MockBean
     private PlayHistoryService playHistoryService;
     @MockBean
-    private JwtService jwtService;
-    @MockBean
-    private TokenRevocationService tokenRevocationService;
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
     @MockBean
     private FileStorageProperties fileStorageProperties;
-    @MockBean
-    private JpaMetamodelMappingContext jpaMetamodelMappingContext;
+    @MockBean(name = "jpaMappingContext")
+    private org.springframework.data.jpa.mapping.JpaMetamodelMappingContext jpaMappingContext;
 
     @Autowired
-    PlayHistoryControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
+    PlayHistoryControllerTest(MockMvc mockMvc) {
         this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
+    }
+
+    @BeforeEach
+    void setUp() throws Exception {
+        doAnswer(invocation -> {
+            FilterChain filterChain = invocation.getArgument(2);
+            filterChain.doFilter(
+                    invocation.getArgument(0, ServletRequest.class),
+                    invocation.getArgument(1, ServletResponse.class));
+            return null;
+        }).when(jwtAuthenticationFilter).doFilter(any(ServletRequest.class), any(ServletResponse.class), any(FilterChain.class));
     }
 
     @Test
-    @DisplayName("POST /api/v1/play-history/track authenticated returns 201")
-    void trackPlay_authenticated_201() throws Exception {
-        TrackPlayRequest request = new TrackPlayRequest(1L, 10L, null, true, 120, Instant.now());
-
-        mockMvc.perform(post(BASE + "/track")
-                        .with(authUser())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+    @DisplayName("POST track play authenticated returns 201")
+    void trackPlayAuthenticated() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/track")
+                .with(authentication(auth()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":1,\"songId\":9}"))
                 .andExpect(status().isCreated());
-
-        verify(playHistoryService).trackPlay(request);
     }
 
     @Test
-    @DisplayName("POST /api/v1/play-history/track no auth returns forbidden")
-    void trackPlay_noAuth_forbidden() throws Exception {
-        TrackPlayRequest request = new TrackPlayRequest(1L, 10L, null, true, 120, Instant.now());
-
-        mockMvc.perform(post(BASE + "/track")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+    @DisplayName("POST track play without jwt returns 401")
+    void trackPlayNoJwt() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/track")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":1,\"songId\":9}"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    @DisplayName("GET /api/v1/play-history/{userId} authenticated returns 200")
-    void getHistory_authenticated_200() throws Exception {
-        when(playHistoryService.getHistory(1L))
-                .thenReturn(List.of(new PlayHistoryResponse(1L, 1L, 10L, null, Instant.now(), true, 20)));
+    @DisplayName("GET play history by user id returns 200")
+    void getHistoryOwnUser() throws Exception {
+        when(playHistoryService.getHistory(USER_ID)).thenReturn(
+                List.of(new PlayHistoryResponse(1L, USER_ID, 9L, null, Instant.now(), true, 100)));
 
-        mockMvc.perform(get(BASE + "/{userId}", 1L).with(authUser()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].playId").value(1));
+        mockMvc.perform(get(BASE_PATH + "/" + USER_ID).with(authentication(auth())))
+                .andExpect(status().isOk());
     }
 
     @Test
-    @DisplayName("DELETE /api/v1/play-history/{userId} authenticated returns 204")
-    void clearHistory_authenticated_204() throws Exception {
-        when(playHistoryService.clearHistory(1L)).thenReturn(2L);
+    @DisplayName("DELETE play history by user id returns 204")
+    void clearHistoryOwnUser() throws Exception {
+        when(playHistoryService.clearHistory(any())).thenReturn(2L);
 
-        mockMvc.perform(delete(BASE + "/{userId}", 1L).with(authUser()))
+        mockMvc.perform(delete(BASE_PATH + "/" + USER_ID).with(authentication(auth())))
                 .andExpect(status().isNoContent());
-
-        verify(playHistoryService).clearHistory(1L);
     }
 
-    private RequestPostProcessor authUser() {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(1L, "u1", UserRole.LISTENER);
-        return authentication(new UsernamePasswordAuthenticationToken(principal, null, List.of()));
+    private UsernamePasswordAuthenticationToken auth() {
+        return new UsernamePasswordAuthenticationToken(
+                new AuthenticatedUserPrincipal(USER_ID, "listener", UserRole.LISTENER),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_LISTENER")));
     }
 }

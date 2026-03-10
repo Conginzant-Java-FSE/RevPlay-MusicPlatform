@@ -1,5 +1,10 @@
 package com.revplay.musicplatform.artist.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.artist.dto.request.ArtistSocialLinkCreateRequest;
 import com.revplay.musicplatform.artist.dto.request.ArtistSocialLinkUpdateRequest;
 import com.revplay.musicplatform.artist.dto.response.ArtistSocialLinkResponse;
@@ -13,7 +18,8 @@ import com.revplay.musicplatform.catalog.util.AccessValidator;
 import com.revplay.musicplatform.catalog.util.SecurityUtil;
 import com.revplay.musicplatform.exception.ConflictException;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
-import com.revplay.musicplatform.user.enums.UserRole;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -22,21 +28,19 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class ArtistSocialLinkServiceImplTest {
 
-    private static final Long ARTIST_ID = 15L;
-    private static final Long LINK_ID = 77L;
-    private static final Long USER_ID = 44L;
+    private static final Long ARTIST_ID = 100L;
+    private static final Long USER_ID = 10L;
+    private static final Long OTHER_USER_ID = 20L;
+    private static final Long LINK_ID = 7L;
+    private static final String ROLE_ARTIST = "ARTIST";
+    private static final String ROLE_ADMIN = "ADMIN";
+    private static final String DUPLICATE_PLATFORM = "Social platform already exists for this artist";
+    private static final String LINK_NOT_FOUND = "Social link not found";
+    private static final String ARTIST_NOT_FOUND = "Artist not found";
 
     @Mock
     private ArtistSocialLinkRepository repository;
@@ -53,15 +57,15 @@ class ArtistSocialLinkServiceImplTest {
     private ArtistSocialLinkServiceImpl service;
 
     @Test
-    @DisplayName("create social link saves platform and url")
-    void create_saves() {
-        ArtistSocialLinkCreateRequest request = new ArtistSocialLinkCreateRequest();
-        request.setPlatform(SocialPlatform.INSTAGRAM);
-        request.setUrl("https://instagram.com/rev");
-        ArtistSocialLink entity = link(LINK_ID, ARTIST_ID, SocialPlatform.INSTAGRAM, request.getUrl());
-        ArtistSocialLinkResponse response = response(LINK_ID, SocialPlatform.INSTAGRAM, request.getUrl());
-
-        mockOwnerAccess();
+    @DisplayName("create saves social link for owned artist")
+    void createSuccess() {
+        ArtistSocialLinkCreateRequest request = createRequest();
+        Artist artist = artist(USER_ID);
+        ArtistSocialLink entity = link(ARTIST_ID);
+        ArtistSocialLinkResponse response = new ArtistSocialLinkResponse();
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
         when(repository.existsByArtistIdAndPlatform(ARTIST_ID, SocialPlatform.INSTAGRAM)).thenReturn(false);
         when(mapper.toEntity(request, ARTIST_ID)).thenReturn(entity);
         when(repository.save(entity)).thenReturn(entity);
@@ -69,113 +73,168 @@ class ArtistSocialLinkServiceImplTest {
 
         ArtistSocialLinkResponse actual = service.create(ARTIST_ID, request);
 
-        assertThat(actual.getLinkId()).isEqualTo(LINK_ID);
-        assertThat(actual.getPlatform()).isEqualTo(SocialPlatform.INSTAGRAM);
+        assertThat(actual).isSameAs(response);
+        verify(accessValidator).requireArtistOrAdmin(ROLE_ARTIST);
     }
 
     @Test
-    @DisplayName("create duplicate platform throws ConflictException")
-    void create_duplicatePlatform_throws() {
-        ArtistSocialLinkCreateRequest request = new ArtistSocialLinkCreateRequest();
-        request.setPlatform(SocialPlatform.TWITTER);
-        request.setUrl("https://x.com/rev");
+    @DisplayName("create throws conflict for duplicate platform")
+    void createDuplicatePlatform() {
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(repository.existsByArtistIdAndPlatform(ARTIST_ID, SocialPlatform.INSTAGRAM)).thenReturn(true);
 
-        mockOwnerAccess();
-        when(repository.existsByArtistIdAndPlatform(ARTIST_ID, SocialPlatform.TWITTER)).thenReturn(true);
-
-        assertThatThrownBy(() -> service.create(ARTIST_ID, request))
-                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> service.create(ARTIST_ID, createRequest()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage(DUPLICATE_PLATFORM);
     }
 
     @Test
-    @DisplayName("update social link updates url")
-    void update_updatesUrl() {
-        ArtistSocialLinkUpdateRequest request = new ArtistSocialLinkUpdateRequest();
-        request.setPlatform(SocialPlatform.YOUTUBE);
-        request.setUrl("https://youtube.com/new");
-        ArtistSocialLink entity = link(LINK_ID, ARTIST_ID, SocialPlatform.YOUTUBE, "old");
-        ArtistSocialLinkResponse response = response(LINK_ID, SocialPlatform.YOUTUBE, request.getUrl());
+    @DisplayName("create throws not found when artist missing")
+    void createArtistMissing() {
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.empty());
 
-        mockOwnerAccess();
-        when(repository.findById(LINK_ID)).thenReturn(Optional.of(entity));
+        assertThatThrownBy(() -> service.create(ARTIST_ID, createRequest()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage(ARTIST_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("list maps all social links")
+    void listSuccess() {
+        ArtistSocialLink existing = link(ARTIST_ID);
+        ArtistSocialLinkResponse response = new ArtistSocialLinkResponse();
+        when(repository.findByArtistId(ARTIST_ID)).thenReturn(List.of(existing));
+        when(mapper.toResponse(existing)).thenReturn(response);
+
+        List<ArtistSocialLinkResponse> actual = service.list(ARTIST_ID);
+
+        assertThat(actual).containsExactly(response);
+    }
+
+    @Test
+    @DisplayName("update succeeds for matching artist and unique platform")
+    void updateSuccess() {
+        ArtistSocialLink existing = link(ARTIST_ID);
+        ArtistSocialLinkResponse response = new ArtistSocialLinkResponse();
+        ArtistSocialLinkUpdateRequest request = updateRequest();
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ADMIN);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(repository.findById(LINK_ID)).thenReturn(Optional.of(existing));
         when(repository.existsByArtistIdAndPlatformAndLinkIdNot(ARTIST_ID, SocialPlatform.YOUTUBE, LINK_ID)).thenReturn(false);
-        when(repository.save(entity)).thenReturn(entity);
-        when(mapper.toResponse(entity)).thenReturn(response);
+        when(repository.save(existing)).thenReturn(existing);
+        when(mapper.toResponse(existing)).thenReturn(response);
 
         ArtistSocialLinkResponse actual = service.update(ARTIST_ID, LINK_ID, request);
 
-        assertThat(actual.getUrl()).isEqualTo(request.getUrl());
-        verify(mapper).updateEntity(entity, request);
+        assertThat(actual).isSameAs(response);
+        verify(mapper).updateEntity(existing, request);
     }
 
     @Test
-    @DisplayName("delete social link removes entity")
-    void delete_removes() {
-        ArtistSocialLink entity = link(LINK_ID, ARTIST_ID, SocialPlatform.SPOTIFY, "https://s");
+    @DisplayName("update throws not found when link missing")
+    void updateLinkMissing() {
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ADMIN);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(repository.findById(LINK_ID)).thenReturn(Optional.empty());
 
-        mockOwnerAccess();
-        when(repository.findById(LINK_ID)).thenReturn(Optional.of(entity));
+        assertThatThrownBy(() -> service.update(ARTIST_ID, LINK_ID, updateRequest()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage(LINK_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("update throws not found when link belongs to different artist")
+    void updateWrongArtist() {
+        ArtistSocialLink existing = link(999L);
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ADMIN);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(repository.findById(LINK_ID)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.update(ARTIST_ID, LINK_ID, updateRequest()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage(LINK_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("update throws conflict for duplicate platform")
+    void updateDuplicatePlatform() {
+        ArtistSocialLink existing = link(ARTIST_ID);
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ADMIN);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(repository.findById(LINK_ID)).thenReturn(Optional.of(existing));
+        when(repository.existsByArtistIdAndPlatformAndLinkIdNot(ARTIST_ID, SocialPlatform.YOUTUBE, LINK_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.update(ARTIST_ID, LINK_ID, updateRequest()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage(DUPLICATE_PLATFORM);
+    }
+
+    @Test
+    @DisplayName("delete removes social link when ownership and artist match")
+    void deleteSuccess() {
+        ArtistSocialLink existing = link(ARTIST_ID);
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ADMIN);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(repository.findById(LINK_ID)).thenReturn(Optional.of(existing));
 
         service.delete(ARTIST_ID, LINK_ID);
 
-        verify(repository).delete(entity);
+        verify(repository).delete(existing);
     }
 
     @Test
-    @DisplayName("list returns all links for artist")
-    void list_returnsLinks() {
-        ArtistSocialLink first = link(1L, ARTIST_ID, SocialPlatform.INSTAGRAM, "a");
-        ArtistSocialLink second = link(2L, ARTIST_ID, SocialPlatform.YOUTUBE, "b");
-        when(repository.findByArtistId(ARTIST_ID)).thenReturn(List.of(first, second));
-        when(mapper.toResponse(first)).thenReturn(response(1L, SocialPlatform.INSTAGRAM, "a"));
-        when(mapper.toResponse(second)).thenReturn(response(2L, SocialPlatform.YOUTUBE, "b"));
+    @DisplayName("delete throws not found when link missing")
+    void deleteLinkMissing() {
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ADMIN);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(USER_ID)));
+        when(repository.findById(LINK_ID)).thenReturn(Optional.empty());
 
-        List<ArtistSocialLinkResponse> responses = service.list(ARTIST_ID);
-
-        assertThat(responses).hasSize(2);
-    }
-
-    @Test
-    @DisplayName("operations on missing artist throw ResourceNotFoundException")
-    void operations_missingArtist_throw() {
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.empty());
-
-        ArtistSocialLinkCreateRequest createRequest = new ArtistSocialLinkCreateRequest();
-        createRequest.setPlatform(SocialPlatform.WEBSITE);
-        createRequest.setUrl("https://site");
-
-        assertThatThrownBy(() -> service.create(ARTIST_ID, createRequest))
-                .isInstanceOf(ResourceNotFoundException.class);
-        assertThatThrownBy(() -> service.update(ARTIST_ID, LINK_ID, new ArtistSocialLinkUpdateRequest()))
-                .isInstanceOf(ResourceNotFoundException.class);
         assertThatThrownBy(() -> service.delete(ARTIST_ID, LINK_ID))
-                .isInstanceOf(ResourceNotFoundException.class);
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage(LINK_NOT_FOUND);
     }
 
-    private void mockOwnerAccess() {
+    @Test
+    @DisplayName("delete throws artist not found when ownership check fails")
+    void deleteOwnershipFail() {
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(OTHER_USER_ID)));
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+
+        assertThatThrownBy(() -> service.delete(ARTIST_ID, LINK_ID))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage(ARTIST_NOT_FOUND);
+    }
+
+    private Artist artist(Long userId) {
         Artist artist = new Artist();
         artist.setArtistId(ARTIST_ID);
-        artist.setUserId(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        artist.setUserId(userId);
+        return artist;
     }
 
-    private ArtistSocialLink link(Long linkId, Long artistId, SocialPlatform platform, String url) {
+    private ArtistSocialLink link(Long artistId) {
         ArtistSocialLink link = new ArtistSocialLink();
-        link.setLinkId(linkId);
+        link.setLinkId(LINK_ID);
         link.setArtistId(artistId);
-        link.setPlatform(platform);
-        link.setUrl(url);
+        link.setPlatform(SocialPlatform.INSTAGRAM);
         return link;
     }
 
-    private ArtistSocialLinkResponse response(Long linkId, SocialPlatform platform, String url) {
-        ArtistSocialLinkResponse response = new ArtistSocialLinkResponse();
-        response.setLinkId(linkId);
-        response.setPlatform(platform);
-        response.setUrl(url);
-        return response;
+    private ArtistSocialLinkCreateRequest createRequest() {
+        ArtistSocialLinkCreateRequest request = new ArtistSocialLinkCreateRequest();
+        request.setPlatform(SocialPlatform.INSTAGRAM);
+        request.setUrl("https://instagram.com/x");
+        return request;
+    }
+
+    private ArtistSocialLinkUpdateRequest updateRequest() {
+        ArtistSocialLinkUpdateRequest request = new ArtistSocialLinkUpdateRequest();
+        request.setPlatform(SocialPlatform.YOUTUBE);
+        request.setUrl("https://youtube.com/x");
+        return request;
     }
 }

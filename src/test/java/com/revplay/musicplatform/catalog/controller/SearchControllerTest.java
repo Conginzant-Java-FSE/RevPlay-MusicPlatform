@@ -1,108 +1,78 @@
 package com.revplay.musicplatform.catalog.controller;
 
-import com.revplay.musicplatform.catalog.dto.request.SearchRequest;
-import com.revplay.musicplatform.catalog.dto.response.SearchResultItemResponse;
-import com.revplay.musicplatform.catalog.service.SearchService;
-import com.revplay.musicplatform.common.MockSecurityContextHelper;
-import com.revplay.musicplatform.common.dto.PagedResponseDto;
-import com.revplay.musicplatform.config.FileStorageProperties;
-import com.revplay.musicplatform.playlist.service.PlaylistSearchService;
-import com.revplay.musicplatform.security.service.DiscoveryRateLimiterService;
-import com.revplay.musicplatform.security.service.impl.JwtServiceImpl;
-import com.revplay.musicplatform.security.service.impl.TokenRevocationServiceImpl;
-import com.revplay.musicplatform.user.enums.UserRole;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.context.annotation.Import;
-import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
-import org.springframework.test.web.servlet.MockMvc;
-
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@Tag("unit")
+import com.revplay.musicplatform.catalog.dto.response.SearchResultItemResponse;
+import com.revplay.musicplatform.catalog.service.SearchService;
+import com.revplay.musicplatform.common.dto.PagedResponseDto;
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
+import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
+import com.revplay.musicplatform.playlist.dto.response.PlaylistResponse;
+import com.revplay.musicplatform.playlist.service.PlaylistSearchService;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
+import com.revplay.musicplatform.security.SecurityConfig;
+import com.revplay.musicplatform.security.service.DiscoveryRateLimiterService;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
+import org.springframework.test.web.servlet.MockMvc;
+
 @WebMvcTest(SearchController.class)
-
-@AutoConfigureMockMvc(addFilters = false)
-@Import(MockSecurityContextHelper.class)
+@Import({ SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class })
+@Tag("integration")
 class SearchControllerTest {
+    private final MockMvc mockMvc;
+    @MockBean private SearchService searchService;
+    @MockBean private PlaylistSearchService playlistSearchService;
+    @MockBean private DiscoveryRateLimiterService discoveryRateLimiterService;
+    @MockBean private JwtAuthenticationFilter jwtAuthenticationFilter;
+    @MockBean private FileStorageProperties fileStorageProperties;
+    @MockBean private JpaMetamodelMappingContext jpaMetamodelMappingContext;
 
-        @Autowired
-        private MockMvc mockMvc;
+    @Autowired
+    SearchControllerTest(MockMvc mockMvc) { this.mockMvc = mockMvc; }
 
-        @MockBean
+    @BeforeEach
+    void setUp() throws Exception {
+        org.mockito.Mockito.doAnswer(invocation -> {
+            FilterChain filterChain = invocation.getArgument(2);
+            filterChain.doFilter(invocation.getArgument(0, ServletRequest.class), invocation.getArgument(1, ServletResponse.class));
+            return null;
+        }).when(jwtAuthenticationFilter).doFilter(org.mockito.ArgumentMatchers.any(ServletRequest.class), org.mockito.ArgumentMatchers.any(ServletResponse.class), org.mockito.ArgumentMatchers.any(FilterChain.class));
+    }
 
-        private JpaMetamodelMappingContext jpaMetamodelMappingContext;
+    @Test
+    @DisplayName("search delegates and applies rate limiter")
+    void searchDelegatesAndAppliesRateLimiter() throws Exception {
+        when(searchService.search(any())).thenReturn(new PagedResponseDto<>(List.of(new SearchResultItemResponse("song", 1L, "Find Me", 2L, "Artist", "MUSIC", LocalDate.now())), 0, 20, 1, 1, "releaseDate", "DESC"));
+        mockMvc.perform(get("/api/v1/search").param("q", "find").header("X-Forwarded-For", "1.2.3.4")).andExpect(status().isOk()).andExpect(jsonPath("$.data.content[0].title").value("Find Me"));
+        verify(discoveryRateLimiterService).ensureWithinLimit(eq("search:1.2.3.4"), eq(60), eq(60), any());
+    }
 
-
-        @MockBean
-        private FileStorageProperties fileStorageProperties;
-
-
-        @MockBean
-        private SearchService searchService;
-
-        @MockBean
-        private PlaylistSearchService playlistSearchService;
-
-        @MockBean
-        private DiscoveryRateLimiterService discoveryRateLimiterService;
-
-        @MockBean
-        private JwtServiceImpl jwtService;
-
-        @MockBean
-        private TokenRevocationServiceImpl tokenRevocationService;
-
-        @Autowired
-        private MockSecurityContextHelper securityContextHelper;
-
-        @Test
-        @DisplayName("GET /api/v1/search: success")
-        void search_Success() throws Exception {
-                securityContextHelper.setMockUser(1L, "user", UserRole.LISTENER.name());
-
-                PagedResponseDto<SearchResultItemResponse> mockResponse = new PagedResponseDto<>(
-                                List.of(new SearchResultItemResponse("song", 1L, "Faded", 10L, "Alan Walker", "MUSIC",
-                                                null)),
-                                0, 20, 1L, 1, "releaseDate", "DESC");
-
-                when(searchService.search(any(SearchRequest.class))).thenReturn(mockResponse);
-
-                mockMvc.perform(get("/api/v1/search")
-                                .param("q", "faded")
-                                .param("type", "song"))
-                                .andExpect(status().isOk())
-                                .andExpect(jsonPath("$.data.content[0].title").value("Faded"));
-
-                verify(discoveryRateLimiterService).ensureWithinLimit(anyString(), anyInt(), anyInt(), anyString());
-        }
-
-        @Test
-        @DisplayName("GET /api/v1/search/playlists: success")
-        void searchPlaylists_Success() throws Exception {
-                securityContextHelper.setMockUser(1L, "user", UserRole.LISTENER.name());
-
-                when(playlistSearchService.searchPublicPlaylists(eq("gym"), anyInt(), anyInt()))
-                                .thenReturn(new PagedResponseDto<>(List.of(), 0, 20, 0, 0, null, null));
-
-                mockMvc.perform(get("/api/v1/search/playlists")
-                                .param("keyword", "gym"))
-                                .andExpect(status().isOk());
-        }
+    @Test
+    @DisplayName("playlist search returns paged response")
+    void playlistSearchReturnsPagedResponse() throws Exception {
+        PlaylistResponse response = PlaylistResponse.builder().id(5L).name("Chill").userId(3L).createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now()).build();
+        when(playlistSearchService.searchPublicPlaylists(eq("chill"), eq(0), eq(20))).thenReturn(new PagedResponseDto<>(List.of(response), 0, 20, 1, 1, "createdAt", "DESC"));
+        mockMvc.perform(get("/api/v1/search/playlists").param("keyword", "chill")).andExpect(status().isOk()).andExpect(jsonPath("$.data.content[0].name").value("Chill"));
+    }
 }
-
-
-
-

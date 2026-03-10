@@ -1,186 +1,195 @@
 package com.revplay.musicplatform.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.security.service.JwtService;
 import com.revplay.musicplatform.security.service.TokenRevocationService;
 import com.revplay.musicplatform.user.enums.UserRole;
 import com.revplay.musicplatform.user.exception.AuthUnauthorizedException;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
-import java.io.IOException;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowable;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class JwtAuthenticationFilterTest {
 
-    private static final String VALID_TOKEN = "valid-token";
+    private static final String ACCESS_TOKEN = "valid-access-token";
+    private static final String REFRESH_TOKEN = "valid-refresh-token";
+    private static final String BEARER_PREFIX = "Bearer ";
 
     @Mock
     private JwtService jwtService;
     @Mock
     private TokenRevocationService tokenRevocationService;
-    @Mock
-    private FilterChain filterChain;
 
     @AfterEach
-    void clearContext() {
+    void tearDown() {
         SecurityContextHolder.clearContext();
     }
 
-    @Test
-    @DisplayName("authorization absent keeps SecurityContext empty")
-    void headerAbsent() throws ServletException, IOException {
-        execute(null);
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verifyNoInteractions(jwtService, tokenRevocationService);
-    }
-
-    @Test
-    @DisplayName("authorization empty string keeps SecurityContext empty")
-    void emptyHeader() throws ServletException, IOException {
-        execute("");
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verifyNoInteractions(jwtService, tokenRevocationService);
-    }
-
-    @Test
-    @DisplayName("authorization Bearer blank keeps SecurityContext empty")
-    void bearerBlank() throws ServletException, IOException {
-        execute("Bearer ");
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verify(tokenRevocationService).isRevoked("");
-    }
-
-    @Test
-    @DisplayName("authorization with Basic scheme keeps SecurityContext empty")
-    void basicScheme() throws ServletException, IOException {
-        execute("Basic dXNlcjpwYXNz");
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verifyNoInteractions(jwtService, tokenRevocationService);
-    }
-
-    @Test
-    @DisplayName("authorization Bearer without space keeps SecurityContext empty")
-    void bearerWithoutSpace() throws ServletException, IOException {
-        execute("Bearer");
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verifyNoInteractions(jwtService, tokenRevocationService);
-    }
-
-    @Test
-    @DisplayName("valid non-revoked access token sets AuthenticatedUserPrincipal")
-    void validAccessToken() throws ServletException, IOException {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(5L, "alice", UserRole.ARTIST);
-        when(tokenRevocationService.isRevoked(VALID_TOKEN)).thenReturn(false);
-        when(jwtService.isAccessToken(VALID_TOKEN)).thenReturn(true);
-        when(jwtService.toPrincipal(VALID_TOKEN)).thenReturn(principal);
-
-        execute("Bearer " + VALID_TOKEN);
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
-        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(principal);
-    }
-
-    @Test
-    @DisplayName("revoked token keeps SecurityContext empty and continues chain")
-    void revokedToken() throws ServletException, IOException {
-        when(tokenRevocationService.isRevoked(VALID_TOKEN)).thenReturn(true);
-
-        execute("Bearer " + VALID_TOKEN);
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verify(jwtService, never()).isAccessToken(VALID_TOKEN);
-    }
-
-    @Test
-    @DisplayName("refresh token used in filter keeps SecurityContext empty")
-    void refreshTokenAsAccess() throws ServletException, IOException {
-        when(tokenRevocationService.isRevoked(VALID_TOKEN)).thenReturn(false);
-        when(jwtService.isAccessToken(VALID_TOKEN)).thenReturn(false);
-
-        execute("Bearer " + VALID_TOKEN);
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verify(jwtService, never()).toPrincipal(VALID_TOKEN);
-    }
-
-    @Test
-    @DisplayName("tampered token propagates AuthUnauthorizedException")
-    void tamperedToken() {
-        when(tokenRevocationService.isRevoked(VALID_TOKEN)).thenReturn(false);
-        when(jwtService.isAccessToken(VALID_TOKEN)).thenThrow(new AuthUnauthorizedException("Invalid or expired token"));
-
-        Throwable thrown = catchThrowable(() -> execute("Bearer " + VALID_TOKEN));
-
-        assertThat(thrown).isInstanceOf(AuthUnauthorizedException.class);
-    }
-
-    @Test
-    @DisplayName("invalid role claim propagates AuthUnauthorizedException")
-    void invalidRoleClaim() {
-        when(tokenRevocationService.isRevoked(VALID_TOKEN)).thenReturn(false);
-        when(jwtService.isAccessToken(VALID_TOKEN)).thenReturn(true);
-        when(jwtService.toPrincipal(VALID_TOKEN)).thenThrow(new AuthUnauthorizedException("Invalid token role claim"));
-
-        Throwable thrown = catchThrowable(() -> execute("Bearer " + VALID_TOKEN));
-
-        assertThat(thrown).isInstanceOf(AuthUnauthorizedException.class);
-    }
-
-    @Test
-    @DisplayName("already-authenticated context is overwritten in current implementation")
-    void alreadyAuthenticated_actualBehavior() throws ServletException, IOException {
-        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken("existing", null));
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(9L, "bob", UserRole.ADMIN);
-
-        when(tokenRevocationService.isRevoked(VALID_TOKEN)).thenReturn(false);
-        when(jwtService.isAccessToken(VALID_TOKEN)).thenReturn(true);
-        when(jwtService.toPrincipal(VALID_TOKEN)).thenReturn(principal);
-
-        execute("Bearer " + VALID_TOKEN);
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(principal);
-        verify(jwtService).isAccessToken(VALID_TOKEN);
-    }
-
-    @Test
-    @DisplayName("lowercase bearer is treated as invalid scheme")
-    void lowercaseBearer_actualBehavior() throws ServletException, IOException {
-        execute("bearer " + VALID_TOKEN);
-
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-        verifyNoInteractions(jwtService, tokenRevocationService);
-    }
-
-    private void execute(String authorizationHeader) throws ServletException, IOException {
+    @ParameterizedTest
+    @MethodSource("invalidAuthHeaders")
+    @DisplayName("invalid or missing authorization header leaves security context unauthenticated")
+    void invalidAuthorizationHeaders(String headerValue, int expectedAccessTokenChecks) throws Exception {
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
         MockHttpServletRequest request = new MockHttpServletRequest();
         MockHttpServletResponse response = new MockHttpServletResponse();
-        if (authorizationHeader != null) {
-            request.addHeader(HttpHeaders.AUTHORIZATION, authorizationHeader);
+        MockFilterChain chain = new MockFilterChain();
+        if (headerValue != null) {
+            request.addHeader(HttpHeaders.AUTHORIZATION, headerValue);
         }
-        filter.doFilterInternal(request, response, filterChain);
-        verify(filterChain).doFilter(request, response);
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        if (expectedAccessTokenChecks == 0) {
+            verify(jwtService, never()).isAccessToken(org.mockito.ArgumentMatchers.anyString());
+            return;
+        }
+        verify(jwtService, times(expectedAccessTokenChecks)).isAccessToken("");
+    }
+
+    @Test
+    @DisplayName("valid non-revoked access token sets authenticated principal")
+    void validAccessTokenSetsContext() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + ACCESS_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        when(tokenRevocationService.isRevoked(ACCESS_TOKEN)).thenReturn(false);
+        when(jwtService.isAccessToken(ACCESS_TOKEN)).thenReturn(true);
+        when(jwtService.toPrincipal(ACCESS_TOKEN)).thenReturn(new AuthenticatedUserPrincipal(1L, "listener", UserRole.ARTIST));
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+        AuthenticatedUserPrincipal principal = (AuthenticatedUserPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        assertThat(principal.userId()).isEqualTo(1L);
+        assertThat(principal.role()).isEqualTo(UserRole.ARTIST);
+    }
+
+    @Test
+    @DisplayName("revoked token keeps security context empty and continues chain")
+    void revokedTokenSkipped() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + ACCESS_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        when(tokenRevocationService.isRevoked(ACCESS_TOKEN)).thenReturn(true);
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("refresh token used as bearer token does not authenticate")
+    void refreshTokenAsAccessRejected() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + REFRESH_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        when(tokenRevocationService.isRevoked(REFRESH_TOKEN)).thenReturn(false);
+        when(jwtService.isAccessToken(REFRESH_TOKEN)).thenReturn(false);
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("already authenticated request still invokes JWT service in current implementation")
+    void alreadyAuthenticatedStillCallsJwtService() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + ACCESS_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken("existing", null));
+        when(tokenRevocationService.isRevoked(ACCESS_TOKEN)).thenReturn(false);
+        when(jwtService.isAccessToken(ACCESS_TOKEN)).thenReturn(false);
+
+        filter.doFilter(request, response, chain);
+
+        verify(jwtService).isAccessToken(ACCESS_TOKEN);
+    }
+
+    @Test
+    @DisplayName("lowercase bearer is treated as invalid due case-sensitive prefix check")
+    void lowercaseBearerIsInvalid() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, "bearer " + ACCESS_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("jwt parsing exceptions propagate from filter in current implementation")
+    void jwtExceptionsPropagate() {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + ACCESS_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        when(tokenRevocationService.isRevoked(ACCESS_TOKEN)).thenReturn(false);
+        when(jwtService.isAccessToken(ACCESS_TOKEN)).thenThrow(new AuthUnauthorizedException("Invalid or expired token"));
+
+        assertThatThrownBy(() -> filter.doFilter(request, response, chain))
+                .isInstanceOf(AuthUnauthorizedException.class);
+    }
+
+    @Test
+    @DisplayName("invalid role claim from principal mapping propagates exception in current implementation")
+    void invalidRoleClaimPropagates() {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, tokenRevocationService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + ACCESS_TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        when(tokenRevocationService.isRevoked(ACCESS_TOKEN)).thenReturn(false);
+        when(jwtService.isAccessToken(ACCESS_TOKEN)).thenReturn(true);
+        when(jwtService.toPrincipal(ACCESS_TOKEN)).thenThrow(new AuthUnauthorizedException("Invalid token role claim"));
+
+        assertThatThrownBy(() -> filter.doFilter(request, response, chain))
+                .isInstanceOf(AuthUnauthorizedException.class)
+                .hasMessage("Invalid token role claim");
+    }
+
+    private static Stream<Arguments> invalidAuthHeaders() {
+        return Stream.of(
+                Arguments.of((String) null, 0),
+                Arguments.of("", 0),
+                Arguments.of("Bearer ", 1),
+                Arguments.of("Basic dXNlcjpwYXNz", 0),
+                Arguments.of("Bearer", 0)
+        );
     }
 }

@@ -1,5 +1,13 @@
 package com.revplay.musicplatform.playback.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.playback.dto.request.TrackPlayRequest;
 import com.revplay.musicplatform.playback.dto.response.PlayHistoryResponse;
 import com.revplay.musicplatform.playback.entity.PlayHistory;
@@ -7,33 +15,27 @@ import com.revplay.musicplatform.playback.exception.PlaybackNotFoundException;
 import com.revplay.musicplatform.playback.exception.PlaybackValidationException;
 import com.revplay.musicplatform.playback.mapper.PlayHistoryMapper;
 import com.revplay.musicplatform.playback.repository.PlayHistoryRepository;
+import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.time.Instant;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class PlayHistoryServiceImplTest {
 
-    private static final Long USER_ID = 10L;
+    private static final Long USER_ID = 11L;
     private static final Long SONG_ID = 101L;
     private static final Long EPISODE_ID = 202L;
-    private static final String USER_SQL = "SELECT COUNT(1) FROM users WHERE user_id = ?";
+    private static final Long PLAY_ID = 500L;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -41,155 +43,209 @@ class PlayHistoryServiceImplTest {
     private PlayHistoryRepository playHistoryRepository;
     @Mock
     private PlayHistoryMapper playHistoryMapper;
+    @Mock
+    private SongRepository songRepository;
 
-    @InjectMocks
-    private PlayHistoryServiceImpl service;
+    private PlayHistoryServiceImpl playHistoryService;
+
+    @BeforeEach
+    void setUp() {
+        playHistoryService = new PlayHistoryServiceImpl(jdbcTemplate, playHistoryRepository, playHistoryMapper,
+                songRepository);
+    }
 
     @Test
-    @DisplayName("trackPlay song with provided fields saves correctly")
-    void trackPlay_songProvided_savesCorrectly() {
-        Instant playedAt = Instant.now().minusSeconds(60);
+    @DisplayName("trackPlay song with provided fields saves exact values")
+    void trackPlaySong() {
+        Instant playedAt = Instant.parse("2026-01-01T00:00:00Z");
         TrackPlayRequest request = new TrackPlayRequest(USER_ID, SONG_ID, null, true, 120, playedAt);
-        mockUserExists();
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
 
-        service.trackPlay(request);
-
-        ArgumentCaptor<PlayHistory> captor = ArgumentCaptor.forClass(PlayHistory.class);
-        verify(playHistoryRepository).save(captor.capture());
-        PlayHistory saved = captor.getValue();
-        assertThat(saved.getUserId()).isEqualTo(USER_ID);
-        assertThat(saved.getSongId()).isEqualTo(SONG_ID);
-        assertThat(saved.getEpisodeId()).isNull();
-        assertThat(saved.getCompleted()).isTrue();
-        assertThat(saved.getPlayDurationSeconds()).isEqualTo(120);
-        assertThat(saved.getPlayedAt()).isEqualTo(playedAt);
-    }
-
-    @Test
-    @DisplayName("trackPlay episode sets episodeId and defaults fields")
-    void trackPlay_episode_defaultsApplied() {
-        TrackPlayRequest request = new TrackPlayRequest(USER_ID, null, EPISODE_ID, null, null, null);
-        mockUserExists();
-
-        service.trackPlay(request);
+        playHistoryService.trackPlay(request);
 
         ArgumentCaptor<PlayHistory> captor = ArgumentCaptor.forClass(PlayHistory.class);
         verify(playHistoryRepository).save(captor.capture());
-        PlayHistory saved = captor.getValue();
-        assertThat(saved.getSongId()).isNull();
-        assertThat(saved.getEpisodeId()).isEqualTo(EPISODE_ID);
-        assertThat(saved.getCompleted()).isFalse();
-        assertThat(saved.getPlayDurationSeconds()).isZero();
-        assertThat(saved.getPlayedAt()).isNotNull();
+        assertThat(captor.getValue().getSongId()).isEqualTo(SONG_ID);
+        assertThat(captor.getValue().getEpisodeId()).isNull();
+        assertThat(captor.getValue().getPlayedAt()).isEqualTo(playedAt);
+        assertThat(captor.getValue().getCompleted()).isTrue();
+        assertThat(captor.getValue().getPlayDurationSeconds()).isEqualTo(120);
     }
 
     @Test
-    @DisplayName("trackPlay null request throws PlaybackValidationException userId required")
-    void trackPlay_nullRequest_throws() {
-        assertThatThrownBy(() -> service.trackPlay(null))
+    @DisplayName("trackPlay for episode sets episode id and keeps song id null")
+    void trackPlayEpisode() {
+        TrackPlayRequest request = new TrackPlayRequest(USER_ID, null, EPISODE_ID, false, 30, Instant.now());
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+
+        playHistoryService.trackPlay(request);
+
+        ArgumentCaptor<PlayHistory> captor = ArgumentCaptor.forClass(PlayHistory.class);
+        verify(playHistoryRepository).save(captor.capture());
+        assertThat(captor.getValue().getEpisodeId()).isEqualTo(EPISODE_ID);
+        assertThat(captor.getValue().getSongId()).isNull();
+    }
+
+    @Test
+    @DisplayName("trackPlay defaults null playedAt completed and duration")
+    void trackPlayDefaultsApplied() {
+        TrackPlayRequest request = new TrackPlayRequest(USER_ID, SONG_ID, null, null, null, null);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+
+        playHistoryService.trackPlay(request);
+
+        ArgumentCaptor<PlayHistory> captor = ArgumentCaptor.forClass(PlayHistory.class);
+        verify(playHistoryRepository).save(captor.capture());
+        assertThat(captor.getValue().getPlayedAt()).isNotNull();
+        assertThat(captor.getValue().getCompleted()).isFalse();
+        assertThat(captor.getValue().getPlayDurationSeconds()).isZero();
+    }
+
+    @Test
+    @DisplayName("trackPlay with null request throws required user validation")
+    void trackPlayNullRequest() {
+        assertThatThrownBy(() -> playHistoryService.trackPlay(null))
                 .isInstanceOf(PlaybackValidationException.class)
                 .hasMessage("userId is required");
     }
 
     @Test
-    @DisplayName("trackPlay neither song nor episode throws PlaybackValidationException")
-    void trackPlay_noContent_throws() {
-        TrackPlayRequest request = new TrackPlayRequest(USER_ID, null, null, false, 0, Instant.now());
-        mockUserExists();
+    @DisplayName("trackPlay with null user id throws required user validation")
+    void trackPlayNullUserId() {
+        TrackPlayRequest request = new TrackPlayRequest(null, SONG_ID, null, false, 10, Instant.now());
 
-        assertThatThrownBy(() -> service.trackPlay(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        assertThatThrownBy(() -> playHistoryService.trackPlay(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("userId is required");
     }
 
     @Test
-    @DisplayName("trackPlay both song and episode throws PlaybackValidationException")
-    void trackPlay_bothContentIds_throws() {
-        TrackPlayRequest request = new TrackPlayRequest(USER_ID, SONG_ID, EPISODE_ID, false, 0, Instant.now());
-        mockUserExists();
+    @DisplayName("trackPlay with neither song nor episode throws playback validation")
+    void trackPlayNeitherSongNorEpisode() {
+        TrackPlayRequest request = new TrackPlayRequest(USER_ID, null, null, false, 10, Instant.now());
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
 
-        assertThatThrownBy(() -> service.trackPlay(request))
-                .isInstanceOf(PlaybackValidationException.class);
+        assertThatThrownBy(() -> playHistoryService.trackPlay(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("Exactly one of songId or episodeId must be provided");
     }
 
     @Test
-    @DisplayName("trackPlay user missing throws PlaybackNotFoundException")
-    void trackPlay_userMissing_throws() {
-        TrackPlayRequest request = new TrackPlayRequest(USER_ID, SONG_ID, null, false, 0, Instant.now());
-        when(jdbcTemplate.queryForObject(USER_SQL, Long.class, USER_ID)).thenReturn(0L);
+    @DisplayName("trackPlay with both song and episode throws playback validation")
+    void trackPlayBothSongAndEpisode() {
+        TrackPlayRequest request = new TrackPlayRequest(USER_ID, SONG_ID, EPISODE_ID, false, 10, Instant.now());
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
 
-        assertThatThrownBy(() -> service.trackPlay(request))
-                .isInstanceOf(PlaybackNotFoundException.class);
+        assertThatThrownBy(() -> playHistoryService.trackPlay(request))
+                .isInstanceOf(PlaybackValidationException.class)
+                .hasMessage("Exactly one of songId or episodeId must be provided");
     }
 
     @Test
-    @DisplayName("getHistory user records returns ordered list")
-    void getHistory_userHasRecords_returnsList() {
-        PlayHistory entity = new PlayHistory();
-        entity.setPlayId(1L);
-        entity.setUserId(USER_ID);
-        entity.setSongId(SONG_ID);
-        entity.setPlayedAt(Instant.now());
-        PlayHistoryResponse response = new PlayHistoryResponse(1L, USER_ID, SONG_ID, null, entity.getPlayedAt(), false, 10);
-        mockUserExists();
-        when(playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(USER_ID)).thenReturn(List.of(entity));
-        when(playHistoryMapper.toDto(entity)).thenReturn(response);
+    @DisplayName("trackPlay with unknown user throws playback not found")
+    void trackPlayUnknownUser() {
+        TrackPlayRequest request = new TrackPlayRequest(USER_ID, SONG_ID, null, false, 10, Instant.now());
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(0L);
 
-        List<PlayHistoryResponse> actual = service.getHistory(USER_ID);
-
-        assertThat(actual).hasSize(1);
-        assertThat(actual.get(0).songId()).isEqualTo(SONG_ID);
+        assertThatThrownBy(() -> playHistoryService.trackPlay(request))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("User " + USER_ID + " does not exist");
     }
 
     @Test
-    @DisplayName("getHistory missing user throws PlaybackNotFoundException")
-    void getHistory_userMissing_throws() {
-        when(jdbcTemplate.queryForObject(USER_SQL, Long.class, USER_ID)).thenReturn(0L);
+    @DisplayName("getHistory returns ordered mapped results")
+    void getHistoryReturnsData() {
+        PlayHistory play = playHistory(USER_ID, SONG_ID, null);
+        play.setPlayId(PLAY_ID);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(USER_ID)).thenReturn(List.of(play));
+        when(songRepository.existsBySongIdAndIsActiveTrue(SONG_ID)).thenReturn(true);
+        when(playHistoryMapper.toDto(play))
+                .thenReturn(new PlayHistoryResponse(PLAY_ID, USER_ID, SONG_ID, null, play.getPlayedAt(), true, 90));
 
-        assertThatThrownBy(() -> service.getHistory(USER_ID))
-                .isInstanceOf(PlaybackNotFoundException.class);
+        List<PlayHistoryResponse> result = playHistoryService.getHistory(USER_ID);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).songId()).isEqualTo(SONG_ID);
     }
 
     @Test
-    @DisplayName("recentlyPlayed uses fixed limit fifty")
-    void recentlyPlayed_usesLimit50() {
-        PlayHistory entity = new PlayHistory();
-        entity.setPlayId(1L);
-        entity.setUserId(USER_ID);
-        entity.setSongId(SONG_ID);
-        entity.setPlayedAt(Instant.now());
-        mockUserExists();
-        when(playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(USER_ID, PageRequest.of(0, 50)))
-                .thenReturn(List.of(entity));
-        when(playHistoryMapper.toDto(entity))
-                .thenReturn(new PlayHistoryResponse(1L, USER_ID, SONG_ID, null, entity.getPlayedAt(), false, 0));
+    @DisplayName("getHistory filters inactive songs and keeps episode entries")
+    void getHistoryFiltersInactiveSong() {
+        PlayHistory inactiveSong = playHistory(USER_ID, SONG_ID, null);
+        PlayHistory episodePlay = playHistory(USER_ID, null, EPISODE_ID);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(USER_ID))
+                .thenReturn(List.of(inactiveSong, episodePlay));
+        when(songRepository.existsBySongIdAndIsActiveTrue(SONG_ID)).thenReturn(false);
+        when(playHistoryMapper.toDto(episodePlay)).thenReturn(
+                new PlayHistoryResponse(2L, USER_ID, null, EPISODE_ID, episodePlay.getPlayedAt(), false, 10));
 
-        List<PlayHistoryResponse> actual = service.recentlyPlayed(USER_ID);
+        List<PlayHistoryResponse> result = playHistoryService.getHistory(USER_ID);
 
-        assertThat(actual).hasSizeLessThanOrEqualTo(50);
-        verify(playHistoryRepository).findByUserIdOrderByPlayedAtDescPlayIdDesc(USER_ID, PageRequest.of(0, 50));
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).episodeId()).isEqualTo(EPISODE_ID);
     }
 
     @Test
-    @DisplayName("clearHistory user records deleted returns count")
-    void clearHistory_deletes_returnsCount() {
-        mockUserExists();
+    @DisplayName("getHistory unknown user throws playback not found")
+    void getHistoryUnknownUser() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(0L);
+
+        assertThatThrownBy(() -> playHistoryService.getHistory(USER_ID))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("User " + USER_ID + " does not exist");
+    }
+
+    @Test
+    @DisplayName("recentlyPlayed uses fixed page request of fifty")
+    void recentlyPlayedUsesPageSize50() {
+        PlayHistory play = playHistory(USER_ID, SONG_ID, null);
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
+        when(playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(eq(USER_ID), any(Pageable.class)))
+                .thenReturn(List.of(play));
+        when(songRepository.existsBySongIdAndIsActiveTrue(SONG_ID)).thenReturn(true);
+        when(playHistoryMapper.toDto(play))
+                .thenReturn(new PlayHistoryResponse(1L, USER_ID, SONG_ID, null, play.getPlayedAt(), false, 10));
+
+        List<PlayHistoryResponse> result = playHistoryService.recentlyPlayed(USER_ID);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(playHistoryRepository).findByUserIdOrderByPlayedAtDescPlayIdDesc(eq(USER_ID), pageableCaptor.capture());
+        assertThat(pageableCaptor.getValue().getPageNumber()).isZero();
+        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(50);
+        assertThat(result).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("clearHistory deletes all user records and returns count")
+    void clearHistoryReturnsDeletedCount() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(1L);
         when(playHistoryRepository.deleteByUserId(USER_ID)).thenReturn(3L);
 
-        long deleted = service.clearHistory(USER_ID);
+        long deleted = playHistoryService.clearHistory(USER_ID);
 
         assertThat(deleted).isEqualTo(3L);
     }
 
     @Test
-    @DisplayName("clearHistory user missing throws PlaybackNotFoundException")
-    void clearHistory_userMissing_throws() {
-        when(jdbcTemplate.queryForObject(USER_SQL, Long.class, USER_ID)).thenReturn(0L);
+    @DisplayName("clearHistory unknown user throws playback not found")
+    void clearHistoryUnknownUser() {
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq(USER_ID))).thenReturn(0L);
 
-        assertThatThrownBy(() -> service.clearHistory(USER_ID))
-                .isInstanceOf(PlaybackNotFoundException.class);
+        assertThatThrownBy(() -> playHistoryService.clearHistory(USER_ID))
+                .isInstanceOf(PlaybackNotFoundException.class)
+                .hasMessage("User " + USER_ID + " does not exist");
     }
 
-    private void mockUserExists() {
-        when(jdbcTemplate.queryForObject(USER_SQL, Long.class, USER_ID)).thenReturn(1L);
+    private PlayHistory playHistory(Long userId, Long songId, Long episodeId) {
+        PlayHistory playHistory = new PlayHistory();
+        playHistory.setUserId(userId);
+        playHistory.setSongId(songId);
+        playHistory.setEpisodeId(episodeId);
+        playHistory.setPlayedAt(Instant.now());
+        playHistory.setCompleted(Boolean.TRUE);
+        playHistory.setPlayDurationSeconds(90);
+        return playHistory;
     }
 }

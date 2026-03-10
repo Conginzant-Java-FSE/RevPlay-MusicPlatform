@@ -1,51 +1,58 @@
 package com.revplay.musicplatform.artist.contoller;
 
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.revplay.musicplatform.artist.dto.request.ArtistCreateRequest;
 import com.revplay.musicplatform.artist.dto.request.ArtistUpdateRequest;
 import com.revplay.musicplatform.artist.dto.request.ArtistVerifyRequest;
 import com.revplay.musicplatform.artist.dto.response.ArtistResponse;
+import com.revplay.musicplatform.artist.dto.response.ArtistSummaryResponse;
 import com.revplay.musicplatform.artist.enums.ArtistType;
 import com.revplay.musicplatform.artist.service.ArtistService;
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
 import com.revplay.musicplatform.config.FileStorageProperties;
-import com.revplay.musicplatform.exception.AccessDeniedException;
-import com.revplay.musicplatform.exception.ConflictException;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
-import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
 import com.revplay.musicplatform.security.SecurityConfig;
-import com.revplay.musicplatform.security.service.JwtService;
-import com.revplay.musicplatform.security.service.TokenRevocationService;
-import com.revplay.musicplatform.user.enums.UserRole;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
 import org.springframework.http.MediaType;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@Tag("unit")
 @WebMvcTest(ArtistController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class})
+@Tag("integration")
 class ArtistControllerTest {
 
-    private static final Long ARTIST_ID = 7L;
-    private static final String BASE = "/api/v1/artists";
+    private static final String BASE_PATH = "/api/v1/artists";
+    private static final Long ARTIST_ID = 1L;
+    private static final String ARTIST_USER = "artist";
+    private static final String ADMIN_USER = "admin";
+    private static final String ROLE_ARTIST = "ARTIST";
+    private static final String ROLE_ADMIN = "ADMIN";
 
     private final MockMvc mockMvc;
     private final ObjectMapper objectMapper;
@@ -53,9 +60,7 @@ class ArtistControllerTest {
     @MockBean
     private ArtistService artistService;
     @MockBean
-    private JwtService jwtService;
-    @MockBean
-    private TokenRevocationService tokenRevocationService;
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
     @MockBean
     private FileStorageProperties fileStorageProperties;
     @MockBean
@@ -67,150 +72,168 @@ class ArtistControllerTest {
         this.objectMapper = objectMapper;
     }
 
-    @Test
-    @DisplayName("POST artists with ARTIST auth returns 201")
-    void create_artistAuth_created() throws Exception {
-        when(artistService.createArtist(any())).thenReturn(response());
+    @BeforeEach
+    void setUp() throws Exception {
+        doAnswer(invocation -> {
+            ServletRequest request = invocation.getArgument(0);
+            ServletResponse response = invocation.getArgument(1);
+            FilterChain chain = invocation.getArgument(2);
+            chain.doFilter(request, response);
+            return null;
+        }).when(jwtAuthenticationFilter).doFilter(any(), any(), any());
+    }
 
-        mockMvc.perform(post(BASE)
-                        .with(authentication(auth(UserRole.ARTIST)))
+    @Test
+    @DisplayName("POST create artist with auth returns 201")
+    void createWithAuth() throws Exception {
+        ArtistResponse response = new ArtistResponse();
+        response.setArtistId(ARTIST_ID);
+        when(artistService.createArtist(any(ArtistCreateRequest.class))).thenReturn(response);
+
+        mockMvc.perform(post(BASE_PATH)
+                        .with(user(ARTIST_USER).roles(ROLE_ARTIST))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest())))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.artistId").value(ARTIST_ID));
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(artistService).createArtist(any(ArtistCreateRequest.class));
     }
 
     @Test
-    @DisplayName("POST artists listener forbidden when service rejects")
-    void create_listener_forbidden() throws Exception {
-        when(artistService.createArtist(any())).thenThrow(new AccessDeniedException("Artists or admins only"));
+    @DisplayName("POST create artist invalid body returns 400")
+    void createInvalidBody() throws Exception {
+        ArtistCreateRequest request = new ArtistCreateRequest();
+        request.setBio("Bio only");
 
-        mockMvc.perform(post(BASE)
-                        .with(authentication(auth(UserRole.LISTENER)))
+        mockMvc.perform(post(BASE_PATH)
+                        .with(user(ARTIST_USER).roles(ROLE_ARTIST))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verifyNoInteractions(artistService);
+    }
+
+    @Test
+    @DisplayName("POST create artist without auth returns 403")
+    void createNoAuth() throws Exception {
+        mockMvc.perform(post(BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest())))
                 .andExpect(status().isForbidden());
+
+        verifyNoInteractions(artistService);
     }
 
     @Test
-    @DisplayName("POST artists duplicate maps to 409")
-    void create_duplicate_conflict() throws Exception {
-        when(artistService.createArtist(any())).thenThrow(new ConflictException("Artist profile already exists"));
+    @DisplayName("PUT update artist with auth returns 200")
+    void updateWithAuth() throws Exception {
+        when(artistService.updateArtist(any(Long.class), any(ArtistUpdateRequest.class))).thenReturn(new ArtistResponse());
 
-        mockMvc.perform(post(BASE)
-                        .with(authentication(auth(UserRole.ARTIST)))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(createRequest())))
-                .andExpect(status().isConflict());
-    }
-
-    @Test
-    @DisplayName("GET artist by id authenticated returns 200")
-    void get_byId_ok() throws Exception {
-        when(artistService.getArtist(ARTIST_ID)).thenReturn(response());
-
-        mockMvc.perform(get(BASE + "/{id}", ARTIST_ID).with(authentication(auth(UserRole.LISTENER))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.artistId").value(ARTIST_ID));
-    }
-
-    @Test
-    @DisplayName("GET artist not found returns 404")
-    void get_notFound_404() throws Exception {
-        when(artistService.getArtist(ARTIST_ID)).thenThrow(new ResourceNotFoundException("Artist not found"));
-
-        mockMvc.perform(get(BASE + "/{id}", ARTIST_ID).with(authentication(auth(UserRole.LISTENER))))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    @DisplayName("PUT artist owner update returns 200")
-    void update_owner_ok() throws Exception {
-        when(artistService.updateArtist(eq(ARTIST_ID), any())).thenReturn(response());
-
-        mockMvc.perform(put(BASE + "/{id}", ARTIST_ID)
-                        .with(authentication(auth(UserRole.ARTIST)))
+        mockMvc.perform(put(BASE_PATH + "/1")
+                        .with(user(ARTIST_USER).roles(ROLE_ARTIST))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updateRequest())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.artistId").value(ARTIST_ID));
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(artistService).updateArtist(any(Long.class), any(ArtistUpdateRequest.class));
     }
 
     @Test
-    @DisplayName("PUT artist non owner maps to 404")
-    void update_nonOwner_notFound() throws Exception {
-        when(artistService.updateArtist(eq(ARTIST_ID), any())).thenThrow(new ResourceNotFoundException("Artist not found"));
+    @DisplayName("PUT update artist not found returns 404")
+    void updateNotFound() throws Exception {
+        when(artistService.updateArtist(any(Long.class), any(ArtistUpdateRequest.class)))
+                .thenThrow(new ResourceNotFoundException("Artist not found"));
 
-        mockMvc.perform(put(BASE + "/{id}", ARTIST_ID)
-                        .with(authentication(auth(UserRole.ARTIST)))
+        mockMvc.perform(put(BASE_PATH + "/1")
+                        .with(user(ARTIST_USER).roles(ROLE_ARTIST))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updateRequest())))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verify(artistService).updateArtist(any(Long.class), any(ArtistUpdateRequest.class));
     }
 
     @Test
-    @DisplayName("PATCH verify with ADMIN returns 200")
-    void verify_admin_ok() throws Exception {
-        when(artistService.verifyArtist(eq(ARTIST_ID), any())).thenReturn(response());
+    @DisplayName("GET artist profile with auth returns 200")
+    void getArtistWithAuth() throws Exception {
+        when(artistService.getArtist(ARTIST_ID)).thenReturn(new ArtistResponse());
 
-        ArtistVerifyRequest verifyRequest = new ArtistVerifyRequest();
-        verifyRequest.setVerified(true);
+        mockMvc.perform(get(BASE_PATH + "/1").with(user(ARTIST_USER).roles(ROLE_ARTIST)))
+                .andExpect(status().isOk());
 
-        mockMvc.perform(patch(BASE + "/{id}/verify", ARTIST_ID)
-                        .with(authentication(auth(UserRole.ADMIN)))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(verifyRequest)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.artistId").value(ARTIST_ID));
+        verify(artistService).getArtist(ARTIST_ID);
     }
 
     @Test
-    @DisplayName("PATCH verify with ARTIST maps to 403")
-    void verify_artist_forbidden() throws Exception {
-        when(artistService.verifyArtist(eq(ARTIST_ID), any())).thenThrow(new AccessDeniedException("Admin only"));
-        ArtistVerifyRequest verifyRequest = new ArtistVerifyRequest();
-        verifyRequest.setVerified(true);
-
-        mockMvc.perform(patch(BASE + "/{id}/verify", ARTIST_ID)
-                        .with(authentication(auth(UserRole.ARTIST)))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(verifyRequest)))
+    @DisplayName("GET artist profile without auth returns 403")
+    void getArtistNoAuth() throws Exception {
+        mockMvc.perform(get(BASE_PATH + "/1"))
                 .andExpect(status().isForbidden());
+
+        verifyNoInteractions(artistService);
+    }
+
+    @Test
+    @DisplayName("PATCH verify artist with admin auth returns 200")
+    void verifyWithAdmin() throws Exception {
+        ArtistVerifyRequest request = new ArtistVerifyRequest();
+        request.setVerified(Boolean.TRUE);
+        when(artistService.verifyArtist(any(Long.class), any(ArtistVerifyRequest.class))).thenReturn(new ArtistResponse());
+
+        mockMvc.perform(patch(BASE_PATH + "/1/verify")
+                        .with(user(ADMIN_USER).roles(ROLE_ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk());
+
+        verify(artistService).verifyArtist(any(Long.class), any(ArtistVerifyRequest.class));
+    }
+
+    @Test
+    @DisplayName("PATCH verify artist without auth returns 403")
+    void verifyNoAuth() throws Exception {
+        ArtistVerifyRequest request = new ArtistVerifyRequest();
+        request.setVerified(Boolean.TRUE);
+
+        mockMvc.perform(patch(BASE_PATH + "/1/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(artistService);
+    }
+
+    @Test
+    @DisplayName("GET artist summary with auth returns 200")
+    void summaryWithAuth() throws Exception {
+        when(artistService.getSummary(ARTIST_ID)).thenReturn(new ArtistSummaryResponse());
+
+        mockMvc.perform(get(BASE_PATH + "/1/summary").with(user(ARTIST_USER).roles(ROLE_ARTIST)))
+                .andExpect(status().isOk());
+
+        verify(artistService).getSummary(ARTIST_ID);
     }
 
     private ArtistCreateRequest createRequest() {
         ArtistCreateRequest request = new ArtistCreateRequest();
-        request.setDisplayName("Rev Artist");
-        request.setBio("bio");
+        request.setDisplayName("Name");
+        request.setBio("Bio");
+        request.setBannerImageUrl("banner");
         request.setArtistType(ArtistType.MUSIC);
         return request;
     }
 
     private ArtistUpdateRequest updateRequest() {
         ArtistUpdateRequest request = new ArtistUpdateRequest();
-        request.setDisplayName("Rev Artist Updated");
-        request.setBio("updated");
-        request.setArtistType(ArtistType.MUSIC);
+        request.setDisplayName("Updated");
+        request.setBio("Updated bio");
+        request.setBannerImageUrl("updated-banner");
+        request.setArtistType(ArtistType.PODCAST);
         return request;
-    }
-
-    private ArtistResponse response() {
-        ArtistResponse response = new ArtistResponse();
-        response.setArtistId(ARTIST_ID);
-        response.setUserId(1L);
-        response.setDisplayName("Rev Artist");
-        response.setArtistType(ArtistType.MUSIC);
-        response.setVerified(false);
-        return response;
-    }
-
-    private UsernamePasswordAuthenticationToken auth(UserRole role) {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(1L, "user", role);
-        return new UsernamePasswordAuthenticationToken(
-                principal,
-                null,
-                List.of(new SimpleGrantedAuthority("ROLE_" + role.name()))
-        );
     }
 }

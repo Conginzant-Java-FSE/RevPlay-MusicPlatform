@@ -1,5 +1,16 @@
 package com.revplay.musicplatform.catalog.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.artist.entity.Artist;
 import com.revplay.musicplatform.artist.enums.ArtistType;
 import com.revplay.musicplatform.artist.repository.ArtistRepository;
@@ -17,35 +28,43 @@ import com.revplay.musicplatform.catalog.util.AccessValidator;
 import com.revplay.musicplatform.catalog.util.AudioMetadataService;
 import com.revplay.musicplatform.catalog.util.FileStorageService;
 import com.revplay.musicplatform.catalog.util.SecurityUtil;
+import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
-import com.revplay.musicplatform.exception.UnauthorizedException;
-import com.revplay.musicplatform.user.enums.UserRole;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class SongServiceImplTest {
+
+    private static final Long USER_ID = 11L;
+    private static final Long ARTIST_ID = 22L;
+    private static final Long SONG_ID = 33L;
+    private static final Long ALBUM_ID = 44L;
+    private static final String ROLE_ARTIST = "ARTIST";
+    private static final String SONG_TITLE = "Skyline";
+    private static final String UPDATED_TITLE = "Updated";
+    private static final String OLD_FILE_URL = "/api/v1/files/songs/old.mp3";
+    private static final String NEW_FILE_NAME = "new.mp3";
+    private static final String NEW_FILE_URL = "/api/v1/files/songs/" + NEW_FILE_NAME;
+    private static final int DURATION = 180;
+    private static final String MSG_NOT_ALLOWED = "Artist not allowed to upload songs";
+    private static final String MSG_NOT_FOUND = "Song not found";
+    private static final String MSG_ARTIST_NOT_FOUND = "Artist not found";
+    private static final String MSG_OWNERSHIP_ERROR = "Album does not belong to the song artist";
 
     @Mock
     private SongRepository songRepository;
@@ -65,254 +84,332 @@ class SongServiceImplTest {
     private AudioMetadataService audioMetadataService;
     @Mock
     private ApplicationEventPublisher eventPublisher;
+    @Mock
+    private MultipartFile audioFile;
+    @Captor
+    private ArgumentCaptor<SongDeletedEvent> eventCaptor;
 
-    @InjectMocks
-    private SongServiceImpl songService;
-
-    private static final Long USER_ID = 1L;
-    private static final Long ARTIST_ID = 10L;
-    private static final Long SONG_ID = 100L;
-    private static final Long ALBUM_ID = 50L;
-
-    private Artist artist;
-    private Song song;
+    private SongServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        artist = new Artist();
-        artist.setArtistId(ARTIST_ID);
-        artist.setUserId(USER_ID);
-        artist.setArtistType(ArtistType.MUSIC);
-
-        song = new Song();
-        song.setSongId(SONG_ID);
-        song.setArtistId(ARTIST_ID);
-        song.setAlbumId(ALBUM_ID);
-        song.setTitle("Test Song");
-        song.setDurationSeconds(180);
-        song.setFileUrl("/api/v1/files/songs/test.mp3");
-        song.setIsActive(true);
+        service = new SongServiceImpl(
+                songRepository,
+                artistRepository,
+                mapper,
+                fileStorageService,
+                securityUtil,
+                accessValidator,
+                contentValidationService,
+                audioMetadataService,
+                eventPublisher);
     }
 
     @Test
-    @DisplayName("create: ARTIST, valid file, no album")
-    void create_Artist_ValidFile_NoAlbum() {
-        SongCreateRequest request = new SongCreateRequest();
-        request.setTitle("New Song");
-        request.setDurationSeconds(200);
-        MultipartFile file = mock(MultipartFile.class);
+    @DisplayName("create with artist and valid file saves song and returns response")
+    void createArtistValid() {
+        SongCreateRequest request = createRequest(ALBUM_ID, SONG_TITLE, DURATION);
+        Song entity = song(SONG_ID, ARTIST_ID, SONG_TITLE, NEW_FILE_URL);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
 
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(artistRepository.findByUserId(USER_ID)).thenReturn(Optional.of(artist));
-        when(audioMetadataService.resolveDurationSeconds(file, 200)).thenReturn(200);
-        when(fileStorageService.storeSong(file)).thenReturn("stored_file.mp3");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findByUserId(USER_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
+        when(audioMetadataService.resolveDurationSeconds(audioFile, DURATION)).thenReturn(DURATION);
+        when(fileStorageService.storeSong(audioFile)).thenReturn(NEW_FILE_NAME);
+        when(mapper.toEntity(request, ARTIST_ID, NEW_FILE_URL)).thenReturn(entity);
+        when(songRepository.save(entity)).thenReturn(entity);
+        when(mapper.toResponse(entity)).thenReturn(response);
 
-        Song songEntity = new Song();
-        when(mapper.toEntity(eq(request), eq(ARTIST_ID), anyString())).thenReturn(songEntity);
-        when(songRepository.save(any(Song.class))).thenReturn(songEntity);
-        when(mapper.toResponse(any(Song.class))).thenReturn(new SongResponse());
+        SongResponse actual = service.create(request, audioFile);
 
-        SongResponse response = songService.create(request, file);
-
-        assertThat(response).isNotNull();
-        verify(contentValidationService).validateSongDuration(200);
-        verify(songRepository).save(songEntity);
+        verify(accessValidator).requireArtistOrAdmin(ROLE_ARTIST);
+        verify(contentValidationService).validateAlbumBelongsToArtist(ALBUM_ID, ARTIST_ID);
+        assertThat(actual.getSongId()).isEqualTo(SONG_ID);
     }
 
     @Test
-    @DisplayName("create: LISTENER role")
-    void create_ListenerRole_ThrowsUnauthorized() {
-        when(securityUtil.getUserRole()).thenReturn(UserRole.LISTENER.name());
-        doThrow(new UnauthorizedException("Access denied")).when(accessValidator).requireArtistOrAdmin(anyString());
-
-        assertThatThrownBy(() -> songService.create(new SongCreateRequest(), mock(MultipartFile.class)))
-                .isInstanceOf(UnauthorizedException.class);
-    }
-
-    @Test
-    @DisplayName("create: artist type = PODCAST")
-    void create_PodcastArtist_ThrowsException() {
-        artist.setArtistType(ArtistType.PODCAST);
+    @DisplayName("create with podcast artist type throws not found")
+    void createPodcastArtistDenied() {
+        SongCreateRequest request = createRequest(ALBUM_ID, SONG_TITLE, DURATION);
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(artistRepository.findByUserId(USER_ID)).thenReturn(Optional.of(artist));
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findByUserId(USER_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.PODCAST)));
 
-        assertThatThrownBy(() -> songService.create(new SongCreateRequest(), mock(MultipartFile.class)))
+        assertThatThrownBy(() -> service.create(request, audioFile))
                 .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("Artist not allowed to upload songs");
+                .hasMessage(MSG_NOT_ALLOWED);
     }
 
     @Test
-    @DisplayName("create: ADMIN creates for any artist profile")
-    void create_Admin_Success() {
-        SongCreateRequest request = new SongCreateRequest();
-        request.setTitle("Admin Song");
-        request.setDurationSeconds(210);
-        MultipartFile file = mock(MultipartFile.class);
+    @DisplayName("create with null file uses request duration")
+    void createWithNullFileUsesRequestDuration() {
+        SongCreateRequest request = createRequest(null, SONG_TITLE, DURATION);
+        Song entity = song(SONG_ID, ARTIST_ID, SONG_TITLE, NEW_FILE_URL);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
 
-        when(securityUtil.getUserId()).thenReturn(999L);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ADMIN.name());
-        when(artistRepository.findByUserId(999L)).thenReturn(Optional.of(artist));
-        when(audioMetadataService.resolveDurationSeconds(file, 210)).thenReturn(210);
-        when(fileStorageService.storeSong(file)).thenReturn("admin_song.mp3");
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findByUserId(USER_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
+        when(audioMetadataService.resolveDurationSeconds(null, DURATION)).thenReturn(DURATION);
+        when(fileStorageService.storeSong(null)).thenReturn(NEW_FILE_NAME);
+        when(mapper.toEntity(request, ARTIST_ID, NEW_FILE_URL)).thenReturn(entity);
+        when(songRepository.save(entity)).thenReturn(entity);
+        when(mapper.toResponse(entity)).thenReturn(response);
 
-        Song songEntity = new Song();
-        when(mapper.toEntity(eq(request), eq(ARTIST_ID), anyString())).thenReturn(songEntity);
-        when(songRepository.save(songEntity)).thenReturn(songEntity);
-        when(mapper.toResponse(songEntity)).thenReturn(new SongResponse());
+        SongResponse actual = service.create(request, null);
 
-        SongResponse response = songService.create(request, file);
-
-        assertThat(response).isNotNull();
-        verify(songRepository).save(songEntity);
+        assertThat(actual.getSongId()).isEqualTo(SONG_ID);
     }
 
     @Test
-    @DisplayName("update: owned song, valid data")
-    void update_OwnedSong_Success() {
+    @DisplayName("update owned song returns updated response")
+    void updateOwnedSong() {
         SongUpdateRequest request = new SongUpdateRequest();
-        request.setTitle("Updated Title");
-        request.setDurationSeconds(190);
+        request.setAlbumId(ALBUM_ID);
+        request.setTitle(UPDATED_TITLE);
+        request.setDurationSeconds(DURATION);
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+        SongResponse response = songResponse(SONG_ID, UPDATED_TITLE);
 
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(songRepository.save(any(Song.class))).thenReturn(song);
-        when(mapper.toResponse(any(Song.class))).thenReturn(new SongResponse());
+        when(songRepository.save(song)).thenReturn(song);
+        when(mapper.toResponse(song)).thenReturn(response);
 
-        SongResponse response = songService.update(SONG_ID, request);
+        SongResponse actual = service.update(SONG_ID, request);
 
-        assertThat(response).isNotNull();
         verify(mapper).updateEntity(song, request);
-        verify(songRepository).save(song);
+        assertThat(actual.getTitle()).isEqualTo(UPDATED_TITLE);
     }
 
     @Test
-    @DisplayName("update: song not found")
-    void update_NotFound_ThrowsException() {
+    @DisplayName("get not found throws resource not found")
+    void getNotFound() {
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> songService.update(SONG_ID, new SongUpdateRequest()))
+        assertThatThrownBy(() -> service.get(SONG_ID))
                 .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("Song not found");
+                .hasMessage(MSG_NOT_FOUND);
     }
 
     @Test
-    @DisplayName("update: song owned by different artist (non-admin)")
-    void update_NotOwned_ThrowsException() {
+    @DisplayName("get inactive song still returns response")
+    void getInactiveSong() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+        song.setIsActive(Boolean.FALSE);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
+
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
-        when(securityUtil.getUserId()).thenReturn(999L); // Different user
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
+        when(mapper.toResponse(song)).thenReturn(response);
 
-        assertThatThrownBy(() -> songService.update(SONG_ID, new SongUpdateRequest()))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("Artist not found");
+        SongResponse actual = service.get(SONG_ID);
+
+        assertThat(actual.getSongId()).isEqualTo(SONG_ID);
     }
 
     @Test
-    @DisplayName("get: found")
-    void get_Found_ReturnsResponse() {
+    @DisplayName("delete owned song soft deletes and publishes event")
+    void deleteOwnedSong() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(mapper.toResponse(song)).thenReturn(new SongResponse());
-
-        SongResponse response = songService.get(SONG_ID);
-
-        assertThat(response).isNotNull();
-    }
-
-    @Test
-    @DisplayName("get: not found")
-    void get_NotFound_ThrowsException() {
-        when(songRepository.findById(SONG_ID)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> songService.get(SONG_ID))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("Song not found");
-    }
-
-    @Test
-    @DisplayName("delete: owned song")
-    void delete_OwnedSong_SoftDeletes() {
-        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
+        when(songRepository.save(song)).thenReturn(song);
 
-        songService.delete(SONG_ID);
+        service.delete(SONG_ID);
 
         assertThat(song.getIsActive()).isFalse();
-        verify(songRepository).save(song);
-        verify(eventPublisher).publishEvent(any(SongDeletedEvent.class));
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getSongId()).isEqualTo(SONG_ID);
     }
 
     @Test
-    @DisplayName("listByArtist: artist has songs")
-    void listByArtist_HasSongs_ReturnsPaginated() {
-        Pageable pageable = PageRequest.of(0, 10);
-        Page<Song> page = new PageImpl<>(List.of(song));
-        when(songRepository.findByArtistId(ARTIST_ID, pageable)).thenReturn(page);
-        when(mapper.toResponse(any(Song.class))).thenReturn(new SongResponse());
+    @DisplayName("listByArtist returns paged response with preserved metadata")
+    void listByArtist() {
+        PageRequest pageable = PageRequest.of(1, 2);
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
+        Page<Song> page = new PageImpl<>(java.util.List.of(song), pageable, 5);
 
-        Page<SongResponse> result = songService.listByArtist(ARTIST_ID, pageable);
+        when(songRepository.findByArtistIdAndIsActiveTrue(ARTIST_ID, pageable)).thenReturn(page);
+        when(mapper.toResponse(song)).thenReturn(response);
 
-        assertThat(result.getContent()).hasSize(1);
+        Page<SongResponse> actual = service.listByArtist(ARTIST_ID, pageable);
+
+        assertThat(actual.getTotalElements()).isEqualTo(5);
+        assertThat(actual.getNumber()).isEqualTo(1);
+        assertThat(actual.getContent()).hasSize(1);
     }
 
     @Test
-    @DisplayName("updateVisibility: owned song")
-    void updateVisibility_OwnedSong_Success() {
+    @DisplayName("updateVisibility with null isActive only updates visibility")
+    void updateVisibilityNullActive() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+        song.setIsActive(Boolean.TRUE);
         SongVisibilityRequest request = new SongVisibilityRequest();
-        request.setIsActive(false);
+        request.setIsActive(null);
         request.setVisibility(ContentVisibility.UNLISTED);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
+        response.setVisibility(ContentVisibility.UNLISTED);
 
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(songRepository.save(any(Song.class))).thenReturn(song);
-        when(mapper.toResponse(any(Song.class))).thenReturn(new SongResponse());
+        when(songRepository.save(song)).thenReturn(song);
+        when(mapper.toResponse(song)).thenReturn(response);
 
-        songService.updateVisibility(SONG_ID, request);
+        SongResponse actual = service.updateVisibility(SONG_ID, request);
 
-        assertThat(song.getIsActive()).isFalse();
-        assertThat(song.getVisibility()).isEqualTo(ContentVisibility.UNLISTED);
-        verify(songRepository).save(song);
+        assertThat(song.getIsActive()).isTrue();
+        assertThat(actual.getVisibility()).isEqualTo(ContentVisibility.UNLISTED);
     }
 
     @Test
-    @DisplayName("replaceAudio: valid fileUrl extraction")
-    void replaceAudio_ValidExtraction_DeletesOldFile() {
-        MultipartFile file = mock(MultipartFile.class);
+    @DisplayName("replaceAudio deletes previous file when url contains file name")
+    void replaceAudioDeletesOldFile() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
+
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(fileStorageService.storeSong(file)).thenReturn("new_file.mp3");
-        when(songRepository.save(any(Song.class))).thenReturn(song);
+        when(audioMetadataService.resolveDurationSeconds(audioFile, DURATION)).thenReturn(DURATION);
+        when(fileStorageService.storeSong(audioFile)).thenReturn(NEW_FILE_NAME);
+        when(songRepository.save(song)).thenReturn(song);
+        when(mapper.toResponse(song)).thenReturn(response);
 
-        songService.replaceAudio(SONG_ID, file);
+        service.replaceAudio(SONG_ID, audioFile);
 
-        verify(fileStorageService).deleteSongFile("test.mp3");
-        assertThat(song.getFileUrl()).endsWith("new_file.mp3");
+        verify(fileStorageService).deleteSongFile("old.mp3");
     }
 
     @Test
-    @DisplayName("replaceAudio: fileUrl=null")
-    void replaceAudio_NullUrl_DoesNotDelete() {
-        song.setFileUrl(null);
-        MultipartFile file = mock(MultipartFile.class);
+    @DisplayName("replaceAudio with null fileUrl does not delete file")
+    void replaceAudioNullFileUrlNoDelete() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, null);
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
+
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(fileStorageService.storeSong(file)).thenReturn("new_file.mp3");
-        when(songRepository.save(any(Song.class))).thenReturn(song);
+        when(audioMetadataService.resolveDurationSeconds(audioFile, DURATION)).thenReturn(DURATION);
+        when(fileStorageService.storeSong(audioFile)).thenReturn(NEW_FILE_NAME);
+        when(songRepository.save(song)).thenReturn(song);
+        when(mapper.toResponse(song)).thenReturn(response);
 
-        songService.replaceAudio(SONG_ID, file);
+        service.replaceAudio(SONG_ID, audioFile);
 
-        verify(fileStorageService, never()).deleteSongFile(anyString());
+        verify(fileStorageService, never()).deleteSongFile(any(String.class));
+    }
+
+    @Test
+    @DisplayName("replaceAudio with malformed file url does not delete file")
+    void replaceAudioMalformedUrlNoDelete() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, "/api/v1/songs/");
+        SongResponse response = songResponse(SONG_ID, SONG_TITLE);
+
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(audioMetadataService.resolveDurationSeconds(audioFile, DURATION)).thenReturn(DURATION);
+        when(fileStorageService.storeSong(audioFile)).thenReturn(NEW_FILE_NAME);
+        when(songRepository.save(song)).thenReturn(song);
+        when(mapper.toResponse(song)).thenReturn(response);
+
+        service.replaceAudio(SONG_ID, audioFile);
+
+        verify(fileStorageService, never()).deleteSongFile(any(String.class));
+    }
+
+    @Test
+    @DisplayName("non-owner artist cannot update song and gets not found")
+    void updateNonOwnerArtist() {
+        Song song = song(SONG_ID, ARTIST_ID, SONG_TITLE, OLD_FILE_URL);
+        SongUpdateRequest request = new SongUpdateRequest();
+        request.setTitle(UPDATED_TITLE);
+        request.setDurationSeconds(DURATION);
+
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
+        when(artistRepository.findById(ARTIST_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID + 1, ArtistType.MUSIC)));
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+
+        assertThatThrownBy(() -> service.update(SONG_ID, request))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage(MSG_ARTIST_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("create propagates album ownership validation error")
+    void createAlbumValidationError() {
+        SongCreateRequest request = createRequest(ALBUM_ID, SONG_TITLE, DURATION);
+
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(artistRepository.findByUserId(USER_ID))
+                .thenReturn(Optional.of(artist(ARTIST_ID, USER_ID, ArtistType.MUSIC)));
+        when(audioMetadataService.resolveDurationSeconds(audioFile, DURATION)).thenReturn(DURATION);
+        doThrow(new BadRequestException(MSG_OWNERSHIP_ERROR))
+                .when(contentValidationService).validateAlbumBelongsToArtist(ALBUM_ID, ARTIST_ID);
+
+        assertThatThrownBy(() -> service.create(request, audioFile))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(MSG_OWNERSHIP_ERROR);
+    }
+
+    private SongCreateRequest createRequest(Long albumId, String title, Integer duration) {
+        SongCreateRequest request = new SongCreateRequest();
+        request.setAlbumId(albumId);
+        request.setTitle(title);
+        request.setDurationSeconds(duration);
+        request.setVisibility(ContentVisibility.PUBLIC);
+        return request;
+    }
+
+    private Song song(Long songId, Long artistId, String title, String fileUrl) {
+        Song song = new Song();
+        song.setSongId(songId);
+        song.setArtistId(artistId);
+        song.setTitle(title);
+        song.setDurationSeconds(DURATION);
+        song.setFileUrl(fileUrl);
+        song.setVisibility(ContentVisibility.PUBLIC);
+        song.setIsActive(Boolean.TRUE);
+        return song;
+    }
+
+    private SongResponse songResponse(Long songId, String title) {
+        SongResponse response = new SongResponse();
+        response.setSongId(songId);
+        response.setTitle(title);
+        response.setVisibility(ContentVisibility.PUBLIC);
+        return response;
+    }
+
+    private Artist artist(Long artistId, Long userId, ArtistType artistType) {
+        Artist artist = new Artist();
+        artist.setArtistId(artistId);
+        artist.setUserId(userId);
+        artist.setArtistType(artistType);
+        return artist;
     }
 }
-

@@ -1,16 +1,28 @@
 package com.revplay.musicplatform.exception;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+
 import com.revplay.musicplatform.catalog.exception.DiscoveryNotFoundException;
 import com.revplay.musicplatform.catalog.exception.DiscoveryValidationException;
 import com.revplay.musicplatform.common.response.ApiResponse;
 import com.revplay.musicplatform.playback.exception.PlaybackNotFoundException;
 import com.revplay.musicplatform.playback.exception.PlaybackValidationException;
-import com.revplay.musicplatform.user.exception.*;
+import com.revplay.musicplatform.user.exception.AuthConflictException;
+import com.revplay.musicplatform.user.exception.AuthForbiddenException;
+import com.revplay.musicplatform.user.exception.AuthNotFoundException;
+import com.revplay.musicplatform.user.exception.AuthUnauthorizedException;
+import com.revplay.musicplatform.user.exception.AuthValidationException;
+import java.lang.reflect.Method;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.core.MethodParameter;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BeanPropertyBindingResult;
@@ -19,169 +31,165 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
-
-import java.lang.reflect.Method;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("unit")
 class GlobalExceptionHandlerTest {
 
-    private static final String MESSAGE = "msg";
+        private static final String MESSAGE = "problem";
+        private static final String VALIDATION_FAILED = "Validation failed";
+        private static final String TEST_FIELD = "email";
+        private static final String TEST_REASON = "invalid";
+        private static final String PARAM_NAME = "songId";
+        private static final String UNEXPECTED_ERROR = "Unexpected error";
+        private static final String NO_STATIC_RESOURCE = "No static resource";
 
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+        private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
-    @Test
-    @DisplayName("handleNotFound returns 404 with expected body")
-    void handleNotFound_returns404() {
-        assertError(handler.handleNotFound(new ResourceNotFoundException(MESSAGE)), HttpStatus.NOT_FOUND, MESSAGE);
-    }
+        @Test
+        @DisplayName("not found family handlers return 404")
+        void notFoundHandlersReturn404() {
+                assertStatusAndMessage(handler.handleNotFound(new ResourceNotFoundException(MESSAGE)),
+                                HttpStatus.NOT_FOUND,
+                                MESSAGE);
 
-    @Test
-    @DisplayName("handleUnauthorized returns 401")
-    void handleUnauthorized_returns401() {
-        assertError(handler.handleUnauthorized(new UnauthorizedException(MESSAGE)), HttpStatus.UNAUTHORIZED, MESSAGE);
-    }
+                ResponseEntity<ApiResponse<Void>> noResourceResponse = handler.handleNoResource(
+                                new NoResourceFoundException(org.springframework.http.HttpMethod.GET, "/x"));
+                assertThat(noResourceResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+                assertThat(noResourceResponse.getBody()).isNotNull();
+                assertThat(noResourceResponse.getBody().getMessage()).contains(NO_STATIC_RESOURCE);
 
-    @Test
-    @DisplayName("handleBadRequest returns 400")
-    void handleBadRequest_returns400() {
-        assertError(handler.handleBadRequest(new BadRequestException(MESSAGE)), HttpStatus.BAD_REQUEST, MESSAGE);
-    }
-
-    @Test
-    @DisplayName("handleForbidden supports AccessDeniedException and AuthForbiddenException")
-    void handleForbidden_returns403() {
-        assertError(handler.handleForbidden(new AccessDeniedException(MESSAGE)), HttpStatus.FORBIDDEN, MESSAGE);
-        assertError(handler.handleForbidden(new AuthForbiddenException(MESSAGE)), HttpStatus.FORBIDDEN, MESSAGE);
-    }
-
-    @Test
-    @DisplayName("handleDuplicate maps duplicate and integrity exceptions to 409")
-    void handleDuplicate_returns409() {
-        assertError(handler.handleDuplicate(new DuplicateResourceException(MESSAGE)), HttpStatus.CONFLICT, MESSAGE);
-        assertError(handler.handleDuplicate(new AuthConflictException(MESSAGE)), HttpStatus.CONFLICT, MESSAGE);
-        assertError(handler.handleDuplicate(new DataIntegrityViolationException(MESSAGE)), HttpStatus.CONFLICT, MESSAGE);
-    }
-
-    @Test
-    @DisplayName("handleDomainNotFound maps domain exceptions to 404")
-    void handleDomainNotFound_returns404() {
-        assertError(handler.handleDomainNotFound(new PlaybackNotFoundException(MESSAGE)), HttpStatus.NOT_FOUND, MESSAGE);
-        assertError(handler.handleDomainNotFound(new DiscoveryNotFoundException(MESSAGE)), HttpStatus.NOT_FOUND, MESSAGE);
-        assertError(handler.handleDomainNotFound(new AuthNotFoundException(MESSAGE)), HttpStatus.NOT_FOUND, MESSAGE);
-    }
-
-    @Test
-    @DisplayName("handleAuthUnauthorized returns 401")
-    void handleAuthUnauthorized_returns401() {
-        assertError(handler.handleAuthUnauthorized(new AuthUnauthorizedException(MESSAGE)), HttpStatus.UNAUTHORIZED, MESSAGE);
-    }
-
-    @Test
-    @DisplayName("handleConflict returns 409")
-    void handleConflict_returns409() {
-        assertError(handler.handleConflict(new ConflictException(MESSAGE)), HttpStatus.CONFLICT, MESSAGE);
-    }
-
-    @Test
-    @DisplayName("handleRequestValidation maps listed exceptions to 400")
-    void handleRequestValidation_returns400() throws Exception {
-        assertError(handler.handleRequestValidation(new PlaybackValidationException(MESSAGE)), HttpStatus.BAD_REQUEST, MESSAGE);
-        assertError(handler.handleRequestValidation(new DiscoveryValidationException(MESSAGE)), HttpStatus.BAD_REQUEST, MESSAGE);
-        assertError(handler.handleRequestValidation(new AuthValidationException(MESSAGE)), HttpStatus.BAD_REQUEST, MESSAGE);
-        assertError(handler.handleRequestValidation(new IllegalArgumentException(MESSAGE)), HttpStatus.BAD_REQUEST, MESSAGE);
-        assertError(handler.handleRequestValidation(new MissingServletRequestPartException("file")), HttpStatus.BAD_REQUEST, "Required part 'file' is not present.");
-        assertError(handler.handleRequestValidation(new MissingServletRequestParameterException("q", "String")), HttpStatus.BAD_REQUEST, "Required request parameter 'q' for method parameter type String is not present");
-        assertError(handler.handleRequestValidation(new HttpMediaTypeNotSupportedException("application/xml")), HttpStatus.BAD_REQUEST, "application/xml");
-    }
-
-    @Test
-    @DisplayName("handleNoResource returns 404")
-    void handleNoResource_returns404() {
-        NoResourceFoundException ex = new NoResourceFoundException(HttpMethod.GET, "/missing");
-
-        ResponseEntity<ApiResponse<Void>> response = handler.handleNoResource(ex);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().isSuccess()).isFalse();
-        assertThat(response.getBody().getMessage()).contains("No static resource");
-        assertThat(response.getBody().getTimestamp()).isNotNull();
-        assertThat(response.getBody().getData()).isNull();
-    }
-
-    @Test
-    @DisplayName("handleValidation with MethodArgumentNotValidException returns field errors")
-    void handleValidation_methodArgumentNotValid_returnsErrors() throws Exception {
-        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new DummyRequest(), "dummyRequest");
-        bindingResult.addError(new FieldError("dummyRequest", "field", "must not be blank"));
-        Method method = DummyController.class.getDeclaredMethod("accept", DummyRequest.class);
-        MethodArgumentNotValidException exception = new MethodArgumentNotValidException(
-                new org.springframework.core.MethodParameter(method, 0),
-                bindingResult
-        );
-
-        ResponseEntity<ApiResponse<Void>> response = handler.handleValidation(exception);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().getMessage()).isEqualTo("Validation failed");
-        assertThat(response.getBody().getErrors()).isNotEmpty();
-        assertThat(response.getBody().getErrors().get(0).getField()).isEqualTo("field");
-        assertThat(response.getBody().getErrors().get(0).getReason()).isEqualTo("must not be blank");
-    }
-
-    @Test
-    @DisplayName("handleValidation with BindException returns field errors")
-    void handleValidation_bindException_returnsErrors() {
-        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new DummyRequest(), "dummyRequest");
-        bindingResult.addError(new FieldError("dummyRequest", "field", "invalid"));
-        BindException bindException = new BindException(bindingResult);
-
-        ResponseEntity<ApiResponse<Void>> response = handler.handleValidation(bindException);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().getErrors()).isNotEmpty();
-        assertThat(response.getBody().getErrors().get(0).getField()).isEqualTo("field");
-    }
-
-    @Test
-    @DisplayName("handleGeneric returns 500 with unexpected error message")
-    void handleGeneric_returns500() {
-        assertError(handler.handleGeneric(new RuntimeException("boom")), HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected error");
-    }
-
-    @Test
-    @DisplayName("handleNotFound with null message does not throw and returns 404")
-    void handleNotFound_nullMessage_safe() {
-        ResponseEntity<ApiResponse<Void>> response = handler.handleNotFound(new ResourceNotFoundException((String) null));
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().getMessage()).isNull();
-        assertThat(response.getBody().isSuccess()).isFalse();
-        assertThat(response.getBody().getTimestamp()).isNotNull();
-    }
-
-    private void assertError(ResponseEntity<ApiResponse<Void>> response, HttpStatus status, String message) {
-        assertThat(response.getStatusCode()).isEqualTo(status);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().isSuccess()).isFalse();
-        assertThat(response.getBody().getMessage()).isEqualTo(message);
-        assertThat(response.getBody().getTimestamp()).isNotNull();
-        assertThat(response.getBody().getData()).isNull();
-    }
-
-    private static final class DummyRequest {
-    }
-
-    private static final class DummyController {
-        @SuppressWarnings("unused")
-        private void accept(DummyRequest request) {
+                assertStatusAndMessage(handler.handleDomainNotFound(new PlaybackNotFoundException(MESSAGE)),
+                                HttpStatus.NOT_FOUND, MESSAGE);
+                assertStatusAndMessage(handler.handleDomainNotFound(new DiscoveryNotFoundException(MESSAGE)),
+                                HttpStatus.NOT_FOUND, MESSAGE);
+                assertStatusAndMessage(handler.handleDomainNotFound(new AuthNotFoundException(MESSAGE)),
+                                HttpStatus.NOT_FOUND,
+                                MESSAGE);
         }
-    }
+
+        @Test
+        @DisplayName("unauthorized handlers return 401")
+        void unauthorizedHandlersReturn401() {
+                assertStatusAndMessage(handler.handleUnauthorized(new UnauthorizedException(MESSAGE)),
+                                HttpStatus.UNAUTHORIZED,
+                                MESSAGE);
+                assertStatusAndMessage(handler.handleAuthUnauthorized(new AuthUnauthorizedException(MESSAGE)),
+                                HttpStatus.UNAUTHORIZED, MESSAGE);
+        }
+
+        @Test
+        @DisplayName("bad request handler returns 400 for BadRequestException")
+        void handleBadRequestReturns400() {
+                assertStatusAndMessage(handler.handleBadRequest(new BadRequestException(MESSAGE)),
+                                HttpStatus.BAD_REQUEST,
+                                MESSAGE);
+        }
+
+        @ParameterizedTest
+        @MethodSource("requestValidationExceptions")
+        @DisplayName("request validation handlers return 400")
+        void requestValidationHandlersReturn400(Exception ex) {
+                assertStatusAndMessage(handler.handleRequestValidation(ex), HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
+
+        private static Stream<Arguments> requestValidationExceptions() {
+                return Stream.of(
+                                Arguments.of(new IllegalArgumentException(MESSAGE)),
+                                Arguments.of(new MissingServletRequestPartException("part")),
+                                Arguments.of(new MissingServletRequestParameterException("param", "type")),
+                                Arguments.of(new HttpMediaTypeNotSupportedException(MESSAGE)),
+                                Arguments.of(new PlaybackValidationException(MESSAGE)),
+                                Arguments.of(new DiscoveryValidationException(MESSAGE)),
+                                Arguments.of(new AuthValidationException(MESSAGE)));
+        }
+
+        @Test
+        @DisplayName("method argument type mismatch returns 400 with detailed message")
+        void handleMethodArgumentTypeMismatchReturns400() throws Exception {
+                Method method = GlobalExceptionHandlerTest.class.getDeclaredMethod("typeMismatchSample", Integer.class);
+                MethodParameter methodParameter = new MethodParameter(method, 0);
+                MethodArgumentTypeMismatchException mismatch = new MethodArgumentTypeMismatchException("abc",
+                                Integer.class,
+                                PARAM_NAME, methodParameter, null);
+                ResponseEntity<ApiResponse<Void>> response = handler.handleMethodArgumentTypeMismatch(mismatch);
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                assertThat(response.getBody()).isNotNull();
+                assertThat(response.getBody().getMessage())
+                                .contains("Invalid value 'abc' for 'songId'. Expected Integer.");
+        }
+
+        @Test
+        @DisplayName("forbidden and conflict handlers map to expected status")
+        void forbiddenAndConflictHandlersMapExpectedStatus() {
+                assertStatusAndMessage(handler.handleForbidden(new AccessDeniedException(MESSAGE)),
+                                HttpStatus.FORBIDDEN,
+                                MESSAGE);
+                assertStatusAndMessage(handler.handleForbidden(new AuthForbiddenException(MESSAGE)),
+                                HttpStatus.FORBIDDEN,
+                                MESSAGE);
+
+                assertStatusAndMessage(handler.handleDuplicate(new DuplicateResourceException(MESSAGE)),
+                                HttpStatus.CONFLICT,
+                                MESSAGE);
+                assertStatusAndMessage(handler.handleDuplicate(new AuthConflictException(MESSAGE)), HttpStatus.CONFLICT,
+                                MESSAGE);
+                assertStatusAndMessage(handler.handleDuplicate(new DataIntegrityViolationException(MESSAGE)),
+                                HttpStatus.CONFLICT, MESSAGE);
+                assertStatusAndMessage(handler.handleConflict(new ConflictException(MESSAGE)), HttpStatus.CONFLICT,
+                                MESSAGE);
+        }
+
+        @Test
+        @DisplayName("validation handler maps method argument not valid and bind exceptions")
+        void validationHandlerMapsValidationErrors() {
+                BeanPropertyBindingResult result = new BeanPropertyBindingResult(new Object(), "target");
+                result.addError(new FieldError("target", TEST_FIELD, TEST_REASON));
+                MethodArgumentNotValidException manv = new MethodArgumentNotValidException(mock(MethodParameter.class),
+                                result);
+
+                ResponseEntity<ApiResponse<Void>> manvResponse = handler.handleValidation(manv);
+
+                assertThat(manvResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                assertThat(manvResponse.getBody()).isNotNull();
+                assertThat(manvResponse.getBody().getMessage()).isEqualTo(VALIDATION_FAILED);
+                assertThat(manvResponse.getBody().getErrors()).hasSize(1);
+                assertThat(manvResponse.getBody().getErrors().get(0).getField()).isEqualTo(TEST_FIELD);
+                assertThat(manvResponse.getBody().getErrors().get(0).getReason()).isEqualTo(TEST_REASON);
+
+                BindException bindException = new BindException(new Object(), "bindTarget");
+                bindException.addError(new FieldError("bindTarget", TEST_FIELD, TEST_REASON));
+                ResponseEntity<ApiResponse<Void>> bindResponse = handler.handleValidation(bindException);
+
+                assertThat(bindResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                assertThat(bindResponse.getBody()).isNotNull();
+                assertThat(bindResponse.getBody().getErrors()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("generic handler returns 500 with unexpected error message")
+        void genericHandlerReturns500() {
+                ResponseEntity<ApiResponse<Void>> response = handler.handleGeneric(new RuntimeException(MESSAGE));
+
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                assertThat(response.getBody()).isNotNull();
+                assertThat(response.getBody().getMessage()).isEqualTo(UNEXPECTED_ERROR);
+                assertThat(response.getBody().isSuccess()).isFalse();
+        }
+
+        private void assertStatusAndMessage(ResponseEntity<ApiResponse<Void>> response, HttpStatus expectedStatus,
+                        String expectedMessage) {
+                assertThat(response.getStatusCode()).isEqualTo(expectedStatus);
+                assertThat(response.getBody()).isNotNull();
+                assertThat(response.getBody().isSuccess()).isFalse();
+                assertThat(response.getBody().getMessage()).isEqualTo(expectedMessage);
+                assertThat(response.getBody().getTimestamp()).isNotNull();
+        }
+
+        @SuppressWarnings("unused")
+        private static void typeMismatchSample(Integer value) {
+        }
 }

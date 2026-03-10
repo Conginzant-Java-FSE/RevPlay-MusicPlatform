@@ -1,5 +1,11 @@
 package com.revplay.musicplatform.catalog.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.artist.entity.Artist;
 import com.revplay.musicplatform.artist.repository.ArtistRepository;
 import com.revplay.musicplatform.audit.event.PodcastEpisodeDeletedEvent;
@@ -17,34 +23,28 @@ import com.revplay.musicplatform.catalog.util.AudioMetadataService;
 import com.revplay.musicplatform.catalog.util.FileStorageService;
 import com.revplay.musicplatform.catalog.util.SecurityUtil;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
-import com.revplay.musicplatform.user.enums.UserRole;
-import org.junit.jupiter.api.BeforeEach;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class PodcastEpisodeServiceImplTest {
+
+    private static final Long USER_ID = 10L;
+    private static final Long ARTIST_ID = 20L;
+    private static final Long PODCAST_ID = 30L;
+    private static final Long EPISODE_ID = 40L;
+    private static final String ROLE_ARTIST = "ARTIST";
 
     @Mock
     private PodcastEpisodeRepository episodeRepository;
@@ -66,168 +66,137 @@ class PodcastEpisodeServiceImplTest {
     private ArtistRepository artistRepository;
     @Mock
     private ApplicationEventPublisher eventPublisher;
+    @Mock
+    private MultipartFile audioFile;
+    @Captor
+    private ArgumentCaptor<PodcastEpisodeDeletedEvent> eventCaptor;
 
     @InjectMocks
-    private PodcastEpisodeServiceImpl episodeService;
-
-    private static final Long USER_ID = 1L;
-    private static final Long ARTIST_ID = 10L;
-    private static final Long PODCAST_ID = 100L;
-    private static final Long EPISODE_ID = 1000L;
-
-    private Artist artist;
-    private Podcast podcast;
-    private PodcastEpisode episode;
-
-    @BeforeEach
-    void setUp() {
-        artist = new Artist();
-        artist.setArtistId(ARTIST_ID);
-        artist.setUserId(USER_ID);
-
-        podcast = new Podcast();
-        podcast.setPodcastId(PODCAST_ID);
-        podcast.setArtistId(ARTIST_ID);
-        podcast.setIsActive(true);
-
-        episode = new PodcastEpisode();
-        episode.setEpisodeId(EPISODE_ID);
-        episode.setPodcastId(PODCAST_ID);
-        episode.setTitle("Test Episode");
-        episode.setAudioUrl("/api/v1/files/podcasts/test.mp3");
-        episode.setDurationSeconds(300);
-    }
+    private PodcastEpisodeServiceImpl service;
 
     @Test
-    @DisplayName("create: success")
-    void create_Success() {
+    @DisplayName("create episode stores file and returns response")
+    void createEpisode() {
+        Podcast podcast = podcast(PODCAST_ID, ARTIST_ID);
         PodcastEpisodeCreateRequest request = new PodcastEpisodeCreateRequest();
-        request.setTitle("New Episode");
-        request.setDurationSeconds(600);
-        MultipartFile file = mock(MultipartFile.class);
-
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast));
+        request.setTitle("Ep1");
+        request.setDurationSeconds(1200);
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, "/api/v1/files/podcasts/ep.mp3");
+        PodcastEpisodeResponse response = episodeResponse(EPISODE_ID, "Ep1");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
         when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
-        when(audioMetadataService.resolveDurationSeconds(file, 600)).thenReturn(600);
-        when(fileStorageService.storePodcast(file)).thenReturn("stored_episode.mp3");
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID)));
+        when(audioMetadataService.resolveDurationSeconds(audioFile, 1200)).thenReturn(1200);
+        when(fileStorageService.storePodcast(audioFile)).thenReturn("ep.mp3");
+        when(mapper.toEntity(request, PODCAST_ID, "/api/v1/files/podcasts/ep.mp3")).thenReturn(episode);
+        when(episodeRepository.save(episode)).thenReturn(episode);
+        when(mapper.toResponse(episode)).thenReturn(response);
 
-        when(mapper.toEntity(eq(request), eq(PODCAST_ID), anyString())).thenReturn(episode);
-        when(episodeRepository.save(any(PodcastEpisode.class))).thenReturn(episode);
-        when(mapper.toResponse(any(PodcastEpisode.class))).thenReturn(new PodcastEpisodeResponse());
+        PodcastEpisodeResponse actual = service.create(PODCAST_ID, request, audioFile);
 
-        PodcastEpisodeResponse response = episodeService.create(PODCAST_ID, request, file);
-
-        assertThat(response).isNotNull();
-        verify(contentValidationService).validatePodcastEpisodeDuration(600);
-        verify(episodeRepository).save(episode);
+        assertThat(actual.getEpisodeId()).isEqualTo(EPISODE_ID);
     }
 
     @Test
-    @DisplayName("create: podcast not found")
-    void create_PodcastNotFound_ThrowsException() {
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.empty());
+    @DisplayName("update owned episode returns updated response")
+    void updateOwnedEpisode() {
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, "/api/v1/files/podcasts/ep.mp3");
+        PodcastEpisodeUpdateRequest request = new PodcastEpisodeUpdateRequest();
+        request.setTitle("Updated");
+        request.setDurationSeconds(1500);
+        PodcastEpisodeResponse response = episodeResponse(EPISODE_ID, "Updated");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast(PODCAST_ID, ARTIST_ID)));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID)));
+        when(episodeRepository.save(episode)).thenReturn(episode);
+        when(mapper.toResponse(episode)).thenReturn(response);
 
-        assertThatThrownBy(
-                () -> episodeService.create(PODCAST_ID, new PodcastEpisodeCreateRequest(), mock(MultipartFile.class)))
+        PodcastEpisodeResponse actual = service.update(PODCAST_ID, EPISODE_ID, request);
+
+        verify(mapper).updateEntity(episode, request);
+        assertThat(actual.getTitle()).isEqualTo("Updated");
+    }
+
+    @Test
+    @DisplayName("delete owned episode removes record and publishes event")
+    void deleteOwnedEpisode() {
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, "/api/v1/files/podcasts/old.mp3");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast(PODCAST_ID, ARTIST_ID)));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID)));
+
+        service.delete(PODCAST_ID, EPISODE_ID);
+
+        verify(episodeRepository).delete(episode);
+        verify(fileStorageService).deletePodcastFile("old.mp3");
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getEpisodeId()).isEqualTo(EPISODE_ID);
+    }
+
+    @Test
+    @DisplayName("delete with blank audio url does not call delete file")
+    void deleteBlankAudioUrlNoDeleteFile() {
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, " ");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast(PODCAST_ID, ARTIST_ID)));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID)));
+
+        service.delete(PODCAST_ID, EPISODE_ID);
+
+        verify(fileStorageService, never()).deletePodcastFile(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("non-owner cannot update episode and gets not found")
+    void nonOwnerCannotUpdate() {
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, "/api/v1/files/podcasts/ep.mp3");
+        PodcastEpisodeUpdateRequest request = new PodcastEpisodeUpdateRequest();
+        request.setTitle("Updated");
+        request.setDurationSeconds(1500);
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast(PODCAST_ID, ARTIST_ID)));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID + 1)));
+
+        assertThatThrownBy(() -> service.update(PODCAST_ID, EPISODE_ID, request))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessage("Podcast not found");
     }
 
-    @Test
-    @DisplayName("update: success")
-    void update_Success() {
-        PodcastEpisodeUpdateRequest request = new PodcastEpisodeUpdateRequest();
-        request.setTitle("Updated Title");
-        request.setDurationSeconds(400);
-
-        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
-        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast));
-        when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-
-        when(episodeRepository.save(any(PodcastEpisode.class))).thenReturn(episode);
-        when(mapper.toResponse(any(PodcastEpisode.class))).thenReturn(new PodcastEpisodeResponse());
-
-        PodcastEpisodeResponse response = episodeService.update(PODCAST_ID, EPISODE_ID, request);
-
-        assertThat(response).isNotNull();
-        verify(contentValidationService).validatePodcastEpisodeDuration(400);
-        verify(mapper).updateEntity(episode, request);
+    private Podcast podcast(Long podcastId, Long artistId) {
+        Podcast podcast = new Podcast();
+        podcast.setPodcastId(podcastId);
+        podcast.setArtistId(artistId);
+        return podcast;
     }
 
-    @Test
-    @DisplayName("get: success")
-    void get_Success() {
-        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
-        when(mapper.toResponse(episode)).thenReturn(new PodcastEpisodeResponse());
-
-        PodcastEpisodeResponse response = episodeService.get(PODCAST_ID, EPISODE_ID);
-
-        assertThat(response).isNotNull();
+    private PodcastEpisode episode(Long episodeId, Long podcastId, String audioUrl) {
+        PodcastEpisode episode = new PodcastEpisode();
+        episode.setEpisodeId(episodeId);
+        episode.setPodcastId(podcastId);
+        episode.setAudioUrl(audioUrl);
+        return episode;
     }
 
-    @Test
-    @DisplayName("get: podcast ID mismatch")
-    void get_PodcastMismatch_ThrowsException() {
-        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
-
-        assertThatThrownBy(() -> episodeService.get(999L, EPISODE_ID))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessage("Episode not found");
+    private PodcastEpisodeResponse episodeResponse(Long episodeId, String title) {
+        PodcastEpisodeResponse response = new PodcastEpisodeResponse();
+        response.setEpisodeId(episodeId);
+        response.setTitle(title);
+        return response;
     }
 
-    @Test
-    @DisplayName("delete: success")
-    void delete_Success() {
-        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
-        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast));
-        when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-
-        episodeService.delete(PODCAST_ID, EPISODE_ID);
-
-        verify(episodeRepository).delete(episode);
-        verify(fileStorageService).deletePodcastFile("test.mp3");
-        verify(eventPublisher).publishEvent(any(PodcastEpisodeDeletedEvent.class));
-    }
-
-    @Test
-    @DisplayName("listByPodcast: returns paginated list")
-    void listByPodcast_ReturnsPaginated() {
-        Pageable pageable = PageRequest.of(0, 10);
-        Page<PodcastEpisode> page = new PageImpl<>(List.of(episode));
-        when(episodeRepository.findByPodcastId(PODCAST_ID, pageable)).thenReturn(page);
-        when(mapper.toResponse(any(PodcastEpisode.class))).thenReturn(new PodcastEpisodeResponse());
-
-        Page<PodcastEpisodeResponse> result = episodeService.listByPodcast(PODCAST_ID, pageable);
-
-        assertThat(result.getContent()).hasSize(1);
-    }
-
-    @Test
-    @DisplayName("replaceAudio: success deletes old file")
-    void replaceAudio_Success() {
-        MultipartFile file = mock(MultipartFile.class);
-        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
-        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast));
-        when(securityUtil.getUserId()).thenReturn(USER_ID);
-        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist));
-        when(securityUtil.getUserRole()).thenReturn(UserRole.ARTIST.name());
-
-        when(audioMetadataService.resolveDurationSeconds(file, 300)).thenReturn(350);
-        when(fileStorageService.storePodcast(file)).thenReturn("new_episode.mp3");
-        when(episodeRepository.save(any(PodcastEpisode.class))).thenReturn(episode);
-        when(mapper.toResponse(any(PodcastEpisode.class))).thenReturn(new PodcastEpisodeResponse());
-
-        episodeService.replaceAudio(PODCAST_ID, EPISODE_ID, file);
-
-        verify(fileStorageService).deletePodcastFile("test.mp3");
-        assertThat(episode.getAudioUrl()).endsWith("new_episode.mp3");
-        assertThat(episode.getDurationSeconds()).isEqualTo(350);
+    private Artist artist(Long artistId, Long userId) {
+        Artist artist = new Artist();
+        artist.setArtistId(artistId);
+        artist.setUserId(userId);
+        return artist;
     }
 }

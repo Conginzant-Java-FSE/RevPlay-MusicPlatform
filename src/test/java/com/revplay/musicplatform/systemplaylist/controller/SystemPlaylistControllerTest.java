@@ -1,16 +1,31 @@
 package com.revplay.musicplatform.systemplaylist.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
 import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
 import com.revplay.musicplatform.security.SecurityConfig;
-import com.revplay.musicplatform.security.service.JwtService;
-import com.revplay.musicplatform.security.service.TokenRevocationService;
-import com.revplay.musicplatform.systemplaylist.dto.request.AddSystemPlaylistSongsRequest;
 import com.revplay.musicplatform.systemplaylist.dto.response.SystemPlaylistResponse;
 import com.revplay.musicplatform.systemplaylist.service.SystemPlaylistService;
 import com.revplay.musicplatform.user.enums.UserRole;
+import java.util.List;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -24,136 +39,144 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.util.List;
-
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@Tag("unit")
 @WebMvcTest(SystemPlaylistController.class)
-@Import(SecurityConfig.class)
+@Import({ SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class })
+@Tag("integration")
 class SystemPlaylistControllerTest {
 
-    private static final String SLUG = "telugu-mix";
+        private static final String BASE_PATH = "/api/v1/system-playlists";
+        private static final String PLAYLIST_SLUG = "focus-mix";
+        private static final Long PLAYLIST_ID = 10L;
+        private static final Long USER_ID = 1L;
+        private static final Long SONG_ID_1 = 1L;
+        private static final Long SONG_ID_2 = 2L;
+        private static final Long SONG_ID_3 = 3L;
+        private static final String VALID_BODY = "{\"songIds\":[1,2]}";
+        private static final String INVALID_EMPTY_BODY = "{\"songIds\":[]}";
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+        private final MockMvc mockMvc;
 
-    @MockBean
-    private SystemPlaylistService systemPlaylistService;
-    @MockBean
-    private JwtService jwtService;
-    @MockBean
-    private TokenRevocationService tokenRevocationService;
-    @MockBean
-    private FileStorageProperties fileStorageProperties;
-    @MockBean
-    private JpaMetamodelMappingContext jpaMetamodelMappingContext;
+        @MockBean
+        private SystemPlaylistService systemPlaylistService;
+        @MockBean
+        private JwtAuthenticationFilter jwtAuthenticationFilter;
+        @MockBean
+        private FileStorageProperties fileStorageProperties;
+        @MockBean
+        private JpaMetamodelMappingContext jpaMetamodelMappingContext;
 
-    @Autowired
-    SystemPlaylistControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+        @Autowired
+        SystemPlaylistControllerTest(MockMvc mockMvc) {
+                this.mockMvc = mockMvc;
+        }
 
-    @Test
-    @DisplayName("GET system playlists without JWT returns 403")
-    void getAll_noJwt_returns403() throws Exception {
-        mockMvc.perform(get("/api/v1/system-playlists"))
-                .andExpect(status().isForbidden());
-    }
+        @BeforeEach
+        void setUp() throws Exception {
+                doAnswer(invocation -> {
+                        HttpServletRequest request = invocation.getArgument(0);
+                        HttpServletResponse response = invocation.getArgument(1);
+                        FilterChain chain = invocation.getArgument(2);
+                        chain.doFilter(request, response);
+                        return null;
+                }).when(jwtAuthenticationFilter).doFilter(any(), any(), any());
+        }
 
-    @Test
-    @DisplayName("GET system playlists authenticated returns 200")
-    void getAll_authenticated_returns200() throws Exception {
-        SystemPlaylistResponse response = SystemPlaylistResponse.builder()
-                .id(1L)
-                .name("Telugu Mix")
-                .slug(SLUG)
-                .description("desc")
-                .build();
-        when(systemPlaylistService.getAllActivePlaylists()).thenReturn(List.of(response));
+        @Test
+        @DisplayName("GET all active playlists with authentication returns 200")
+        void getAllActivePlaylistsReturns200() throws Exception {
+                SystemPlaylistResponse response = SystemPlaylistResponse.builder()
+                                .id(PLAYLIST_ID)
+                                .name("Focus Mix")
+                                .slug(PLAYLIST_SLUG)
+                                .description("Coding")
+                                .build();
+                when(systemPlaylistService.getAllActivePlaylists()).thenReturn(List.of(response));
 
-        mockMvc.perform(get("/api/v1/system-playlists")
-                        .with(authentication(auth(2L, "listener", UserRole.LISTENER))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].slug").value(SLUG));
-    }
+                mockMvc.perform(get(BASE_PATH).with(authentication(auth())))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.success").value(true))
+                                .andExpect(jsonPath("$.data[0].slug").value(PLAYLIST_SLUG));
 
-    @Test
-    @DisplayName("GET system playlist songs with valid slug and auth returns 200")
-    void getSongsBySlug_valid_returns200() throws Exception {
-        when(systemPlaylistService.getSongIdsBySlug(SLUG)).thenReturn(List.of(11L, 22L));
+                verify(systemPlaylistService).getAllActivePlaylists();
+        }
 
-        mockMvc.perform(get("/api/v1/system-playlists/{slug}/songs", SLUG)
-                        .with(authentication(auth(2L, "listener", UserRole.LISTENER))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0]").value(11));
-    }
+        @Test
+        @DisplayName("GET all active playlists without authentication returns 403")
+        void getAllActivePlaylistsWithoutAuthReturns403() throws Exception {
+                mockMvc.perform(get(BASE_PATH))
+                                .andExpect(status().isForbidden());
 
-    @Test
-    @DisplayName("GET system playlist songs with missing slug and auth returns 404")
-    void getSongsBySlug_notFound_returns404() throws Exception {
-        when(systemPlaylistService.getSongIdsBySlug(SLUG)).thenThrow(new ResourceNotFoundException("System playlist", SLUG));
+                verifyNoInteractions(systemPlaylistService);
+        }
 
-        mockMvc.perform(get("/api/v1/system-playlists/{slug}/songs", SLUG)
-                        .with(authentication(auth(2L, "listener", UserRole.LISTENER))))
-                .andExpect(status().isNotFound());
-    }
+        @Test
+        @DisplayName("GET playlist songs by slug with authentication returns 200")
+        void getSongIdsBySlugReturns200() throws Exception {
+                when(systemPlaylistService.getSongIdsBySlug(PLAYLIST_SLUG))
+                                .thenReturn(List.of(SONG_ID_1, SONG_ID_2, SONG_ID_3));
 
-    @Test
-    @DisplayName("POST add songs with authenticated admin returns 201")
-    void addSongs_admin_returns201() throws Exception {
-        AddSystemPlaylistSongsRequest request = new AddSystemPlaylistSongsRequest(List.of(11L, 22L));
-        doNothing().when(systemPlaylistService).addSongsBySlug(eq(SLUG), anyList());
+                mockMvc.perform(get(BASE_PATH + "/" + PLAYLIST_SLUG + "/songs").with(authentication(auth())))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.success").value(true))
+                                .andExpect(jsonPath("$.data[0]").value(SONG_ID_1));
 
-        mockMvc.perform(post("/api/v1/system-playlists/{slug}/songs", SLUG)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request))
-                        .with(authentication(auth(1L, "admin", UserRole.ADMIN))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.success").value(true));
-    }
+                verify(systemPlaylistService).getSongIdsBySlug(PLAYLIST_SLUG);
+        }
 
-    @Test
-    @DisplayName("POST add songs with authenticated listener returns 201")
-    void addSongs_listener_returns201() throws Exception {
-        AddSystemPlaylistSongsRequest request = new AddSystemPlaylistSongsRequest(List.of(11L));
-        doNothing().when(systemPlaylistService).addSongsBySlug(eq(SLUG), anyList());
+        @Test
+        @DisplayName("GET playlist songs by slug not found returns 404")
+        void getSongIdsBySlugNotFoundReturns404() throws Exception {
+                when(systemPlaylistService.getSongIdsBySlug(PLAYLIST_SLUG))
+                                .thenThrow(new ResourceNotFoundException("System playlist", PLAYLIST_SLUG));
 
-        mockMvc.perform(post("/api/v1/system-playlists/{slug}/songs", SLUG)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request))
-                        .with(authentication(auth(2L, "listener", UserRole.LISTENER))))
-                .andExpect(status().isCreated());
-    }
+                mockMvc.perform(get(BASE_PATH + "/" + PLAYLIST_SLUG + "/songs").with(authentication(auth())))
+                                .andExpect(status().isNotFound())
+                                .andExpect(jsonPath("$.success").value(false));
 
-    @Test
-    @DisplayName("POST add songs without JWT returns 403")
-    void addSongs_noJwt_returns403() throws Exception {
-        AddSystemPlaylistSongsRequest request = new AddSystemPlaylistSongsRequest(List.of(11L));
+                verify(systemPlaylistService).getSongIdsBySlug(PLAYLIST_SLUG);
+        }
 
-        mockMvc.perform(post("/api/v1/system-playlists/{slug}/songs", SLUG)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isForbidden());
-    }
+        @Test
+        @DisplayName("POST add songs with valid body returns 201")
+        void addSongsBySlugValidReturns201() throws Exception {
+                mockMvc.perform(post(BASE_PATH + "/" + PLAYLIST_SLUG + "/songs")
+                                .with(authentication(auth()))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(VALID_BODY))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.success").value(true));
 
-    private UsernamePasswordAuthenticationToken auth(Long userId, String username, UserRole role) {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(userId, username, role);
-        return new UsernamePasswordAuthenticationToken(
-                principal,
-                null,
-                List.of(new SimpleGrantedAuthority("ROLE_" + role.name()))
-        );
-    }
+                verify(systemPlaylistService).addSongsBySlug(PLAYLIST_SLUG, List.of(SONG_ID_1, SONG_ID_2));
+        }
+
+        @Test
+        @DisplayName("POST add songs with invalid body returns 400")
+        void addSongsBySlugInvalidBodyReturns400() throws Exception {
+                mockMvc.perform(post(BASE_PATH + "/" + PLAYLIST_SLUG + "/songs")
+                                .with(authentication(auth()))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(INVALID_EMPTY_BODY))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.success").value(false));
+
+                verifyNoInteractions(systemPlaylistService);
+        }
+
+        @Test
+        @DisplayName("POST add songs without authentication returns 403")
+        void addSongsBySlugNoAuthReturns403() throws Exception {
+                mockMvc.perform(post(BASE_PATH + "/" + PLAYLIST_SLUG + "/songs")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(VALID_BODY))
+                                .andExpect(status().isForbidden());
+
+                verifyNoInteractions(systemPlaylistService);
+        }
+
+        private UsernamePasswordAuthenticationToken auth() {
+                return new UsernamePasswordAuthenticationToken(
+                                new AuthenticatedUserPrincipal(USER_ID, "user", UserRole.LISTENER),
+                                null,
+                                List.of(new SimpleGrantedAuthority("ROLE_LISTENER")));
+        }
 }

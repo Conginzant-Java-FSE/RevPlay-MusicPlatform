@@ -1,6 +1,8 @@
 package com.revplay.musicplatform.security.service.impl;
 
-import com.revplay.musicplatform.common.TestDataFactory;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.security.JwtProperties;
 import com.revplay.musicplatform.user.entity.User;
@@ -9,146 +11,140 @@ import com.revplay.musicplatform.user.exception.AuthUnauthorizedException;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
-import org.junit.jupiter.api.BeforeEach;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Date;
+import javax.crypto.SecretKey;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.Date;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 @Tag("unit")
 class JwtServiceImplTest {
 
-    private static final String TEST_SECRET = "test-secret-key-that-is-at-least-256-bits-long-for-hmac-sha";
+    private static final String SECRET = "test-secret-key-that-is-at-least-256-bits-long-for-hmac-sha";
     private static final long ACCESS_EXPIRY_SECONDS = 3600L;
     private static final long REFRESH_EXPIRY_SECONDS = 1209600L;
+    private static final Long USER_ID = 11L;
+    private static final String USERNAME = "jwt-user";
 
-    private JwtServiceImpl jwtService;
-    private User user;
-
-    @BeforeEach
-    void setUp() {
-        JwtProperties properties = new JwtProperties();
-        properties.setSecret(TEST_SECRET);
-        properties.setAccessTokenExpirationSeconds(ACCESS_EXPIRY_SECONDS);
-        properties.setRefreshTokenExpirationSeconds(REFRESH_EXPIRY_SECONDS);
-        jwtService = new JwtServiceImpl(properties);
-        user = TestDataFactory.buildUser(10L, "jwt@test.com", "jwtUser", UserRole.ARTIST);
-    }
+    private final JwtServiceImpl jwtService = new JwtServiceImpl(jwtProperties());
 
     @Test
-    @DisplayName("generateAccessToken creates parseable access token with expected claims")
-    void generateAccessToken_validClaims() {
-        String token = jwtService.generateAccessToken(user);
-
+    @DisplayName("generateAccessToken creates parseable token with access type and claims")
+    void generateAccessToken() {
+        String token = jwtService.generateAccessToken(user(UserRole.ADMIN));
         Claims claims = jwtService.parseToken(token);
 
-        assertThat(claims.getSubject()).isEqualTo("10");
-        assertThat(claims.get("username", String.class)).isEqualTo("jwtUser");
-        assertThat(claims.get("role", String.class)).isEqualTo("ARTIST");
         assertThat(claims.get("token_type", String.class)).isEqualTo("access");
+        assertThat(claims.getSubject()).isEqualTo(String.valueOf(USER_ID));
+        assertThat(claims.get("username", String.class)).isEqualTo(USERNAME);
+        assertThat(claims.get("role", String.class)).isEqualTo(UserRole.ADMIN.name());
     }
 
     @Test
-    @DisplayName("generateRefreshToken creates token_type refresh")
-    void generateRefreshToken_hasRefreshType() {
-        String token = jwtService.generateRefreshToken(user);
-
-        Claims claims = jwtService.parseToken(token);
-
-        assertThat(claims.get("token_type", String.class)).isEqualTo("refresh");
+    @DisplayName("generateRefreshToken creates refresh token type")
+    void generateRefreshToken() {
+        String token = jwtService.generateRefreshToken(user(UserRole.LISTENER));
+        assertThat(jwtService.parseToken(token).get("token_type", String.class)).isEqualTo("refresh");
     }
 
     @Test
-    @DisplayName("isAccessToken returns true for access token")
-    void isAccessToken_accessTokenTrue() {
-        assertThat(jwtService.isAccessToken(jwtService.generateAccessToken(user))).isTrue();
+    @DisplayName("access and refresh token type helpers return expected booleans")
+    void accessRefreshHelpers() {
+        String accessToken = jwtService.generateAccessToken(user(UserRole.LISTENER));
+        String refreshToken = jwtService.generateRefreshToken(user(UserRole.LISTENER));
+
+        assertThat(jwtService.isAccessToken(accessToken)).isTrue();
+        assertThat(jwtService.isAccessToken(refreshToken)).isFalse();
+        assertThat(jwtService.isRefreshToken(refreshToken)).isTrue();
     }
 
     @Test
-    @DisplayName("isAccessToken returns false for refresh token")
-    void isAccessToken_refreshTokenFalse() {
-        assertThat(jwtService.isAccessToken(jwtService.generateRefreshToken(user))).isFalse();
-    }
+    @DisplayName("toPrincipal maps claims to authenticated principal")
+    void toPrincipal() {
+        String accessToken = jwtService.generateAccessToken(user(UserRole.ARTIST));
 
-    @Test
-    @DisplayName("isRefreshToken returns true for refresh token")
-    void isRefreshToken_refreshTokenTrue() {
-        assertThat(jwtService.isRefreshToken(jwtService.generateRefreshToken(user))).isTrue();
-    }
+        AuthenticatedUserPrincipal principal = jwtService.toPrincipal(accessToken);
 
-    @Test
-    @DisplayName("toPrincipal extracts userId username and role")
-    void toPrincipal_valid() {
-        String token = jwtService.generateAccessToken(user);
-
-        AuthenticatedUserPrincipal principal = jwtService.toPrincipal(token);
-
-        assertThat(principal.userId()).isEqualTo(10L);
-        assertThat(principal.username()).isEqualTo("jwtUser");
+        assertThat(principal.userId()).isEqualTo(USER_ID);
+        assertThat(principal.username()).isEqualTo(USERNAME);
         assertThat(principal.role()).isEqualTo(UserRole.ARTIST);
     }
 
     @Test
-    @DisplayName("toPrincipal throws AuthUnauthorizedException for bad role claim")
-    void toPrincipal_badRoleClaim() {
-        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes(StandardCharsets.UTF_8));
-        Instant now = Instant.now();
-        String token = Jwts.builder()
-                .subject("10")
-                .claim("username", "jwtUser")
-                .claim("role", "BAD_ROLE")
-                .claim("token_type", "access")
-                .issuedAt(Date.from(now))
-                .expiration(Date.from(now.plusSeconds(ACCESS_EXPIRY_SECONDS)))
-                .signWith(key)
-                .compact();
-
+    @DisplayName("toPrincipal throws unauthorized for invalid role claim")
+    void toPrincipalBadRoleClaim() {
+        String token = signedToken("access", "BAD_ROLE", Instant.now().plusSeconds(120));
         assertThatThrownBy(() -> jwtService.toPrincipal(token))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Invalid token role claim");
     }
 
     @Test
-    @DisplayName("parseToken throws AuthUnauthorizedException for tampered token")
-    void parseToken_tamperedToken() {
-        String token = jwtService.generateAccessToken(user);
+    @DisplayName("parseToken throws unauthorized for tampered token")
+    void parseTamperedToken() {
+        String token = jwtService.generateAccessToken(user(UserRole.LISTENER));
+        String tampered = tamperSignature(token);
 
-        assertThatThrownBy(() -> jwtService.parseToken(token + "tamper"))
+        assertThatThrownBy(() -> jwtService.parseToken(tampered))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Invalid or expired token");
     }
 
     @Test
-    @DisplayName("parseToken throws AuthUnauthorizedException for expired token")
-    void parseToken_expiredToken() {
-        JwtProperties expiredProperties = new JwtProperties();
-        expiredProperties.setSecret(TEST_SECRET);
-        expiredProperties.setAccessTokenExpirationSeconds(-1);
-        expiredProperties.setRefreshTokenExpirationSeconds(REFRESH_EXPIRY_SECONDS);
-        JwtServiceImpl expiredService = new JwtServiceImpl(expiredProperties);
-
-        String expiredToken = expiredService.generateAccessToken(user);
-
+    @DisplayName("parseToken throws unauthorized for expired token")
+    void parseExpiredToken() {
+        String expiredToken = signedToken("access", UserRole.LISTENER.name(), Instant.now().minusSeconds(1));
         assertThatThrownBy(() -> jwtService.parseToken(expiredToken))
                 .isInstanceOf(AuthUnauthorizedException.class)
                 .hasMessage("Invalid or expired token");
     }
 
     @Test
-    @DisplayName("getExpiry returns instant aligned with token expiration")
-    void getExpiry_matchesTokenExpiration() {
-        String token = jwtService.generateAccessToken(user);
+    @DisplayName("getExpiry returns token expiry instant")
+    void getExpiry() {
+        Instant expectedExpiry = Instant.now().plusSeconds(300);
+        String token = signedToken("access", UserRole.LISTENER.name(), expectedExpiry);
 
-        Instant expiry = jwtService.getExpiry(token);
+        Instant actualExpiry = jwtService.getExpiry(token);
 
-        assertThat(expiry).isAfter(Instant.now().minusSeconds(1));
-        assertThat(expiry).isBefore(Instant.now().plusSeconds(ACCESS_EXPIRY_SECONDS + 5));
+        assertThat(actualExpiry).isNotNull();
+        assertThat(actualExpiry.getEpochSecond()).isEqualTo(expectedExpiry.getEpochSecond());
+    }
+
+    private JwtProperties jwtProperties() {
+        JwtProperties properties = new JwtProperties();
+        properties.setSecret(SECRET);
+        properties.setAccessTokenExpirationSeconds(ACCESS_EXPIRY_SECONDS);
+        properties.setRefreshTokenExpirationSeconds(REFRESH_EXPIRY_SECONDS);
+        return properties;
+    }
+
+    private User user(UserRole role) {
+        User user = new User();
+        user.setUserId(USER_ID);
+        user.setUsername(USERNAME);
+        user.setRole(role);
+        return user;
+    }
+
+    private String signedToken(String tokenType, String role, Instant expiry) {
+        SecretKey key = Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+        return Jwts.builder()
+                .subject(String.valueOf(USER_ID))
+                .claim("username", USERNAME)
+                .claim("role", role)
+                .claim("token_type", tokenType)
+                .issuedAt(Date.from(Instant.now().minusSeconds(5)))
+                .expiration(Date.from(expiry))
+                .signWith(key)
+                .compact();
+    }
+
+    private String tamperSignature(String token) {
+        int lastIndex = token.length() - 1;
+        char replacement = token.charAt(lastIndex) == 'a' ? 'b' : 'a';
+        return token.substring(0, lastIndex) + replacement;
     }
 }

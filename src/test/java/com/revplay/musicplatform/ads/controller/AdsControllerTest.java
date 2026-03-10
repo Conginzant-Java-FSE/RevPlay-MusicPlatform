@@ -1,13 +1,27 @@
 package com.revplay.musicplatform.ads.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.revplay.musicplatform.ads.entity.Ad;
 import com.revplay.musicplatform.ads.service.AdService;
+import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
 import com.revplay.musicplatform.config.FileStorageProperties;
-import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
+import com.revplay.musicplatform.exception.BadRequestException;
+import com.revplay.musicplatform.exception.GlobalExceptionHandler;
+import com.revplay.musicplatform.security.JwtAuthenticationFilter;
 import com.revplay.musicplatform.security.SecurityConfig;
-import com.revplay.musicplatform.security.service.JwtService;
-import com.revplay.musicplatform.security.service.TokenRevocationService;
-import com.revplay.musicplatform.user.enums.UserRole;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -15,36 +29,28 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
 
-import java.util.List;
-
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@Tag("unit")
 @WebMvcTest(AdsController.class)
-@Import(SecurityConfig.class)
+@Import({ SecurityConfig.class, GlobalExceptionHandler.class, ApiResponseBodyAdvice.class })
+@Tag("integration")
 class AdsControllerTest {
 
+    private static final String BASE_PATH = "/api/v1/ads/next";
     private static final Long USER_ID = 10L;
     private static final Long SONG_ID = 20L;
-    private static final String NEXT_URL = "/api/v1/ads/next";
+    private static final String USER_ID_PARAM = "userId";
+    private static final String SONG_ID_PARAM = "songId";
+    private static final String LISTENER_USER = "listener";
+    private static final String LISTENER_ROLE = "LISTENER";
 
     private final MockMvc mockMvc;
 
     @MockBean
     private AdService adService;
     @MockBean
-    private JwtService jwtService;
-    @MockBean
-    private TokenRevocationService tokenRevocationService;
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
     @MockBean
     private FileStorageProperties fileStorageProperties;
     @MockBean
@@ -55,56 +61,71 @@ class AdsControllerTest {
         this.mockMvc = mockMvc;
     }
 
-    @Test
-    @DisplayName("GET next ad authenticated with no ad returns 200 and null data")
-    void getNext_noAd_okNullData() throws Exception {
-        when(adService.getNextAd(USER_ID, SONG_ID)).thenReturn(null);
-
-        mockMvc.perform(get(NEXT_URL)
-                        .param("userId", String.valueOf(USER_ID))
-                        .param("songId", String.valueOf(SONG_ID))
-                        .with(authentication(auth(UserRole.LISTENER))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data").doesNotExist());
+    @BeforeEach
+    void setUp() throws Exception {
+        doAnswer(invocation -> {
+            ServletRequest request = invocation.getArgument(0);
+            ServletResponse response = invocation.getArgument(1);
+            FilterChain chain = invocation.getArgument(2);
+            chain.doFilter(request, response);
+            return null;
+        }).when(jwtAuthenticationFilter).doFilter(any(), any(), any());
     }
 
     @Test
-    @DisplayName("GET next ad authenticated with ad available returns 200 and ad data")
-    void getNext_withAd_okDataPresent() throws Exception {
+    @DisplayName("GET next ad with authentication returns 200 and wrapped response")
+    void getNextWithAuthenticationReturns200() throws Exception {
         Ad ad = new Ad();
-        ad.setId(9L);
-        ad.setTitle("Sponsored Track");
-        ad.setDurationSeconds(15);
-        ad.setMediaUrl("/uploads/ads/x.mp3");
-        ad.setIsActive(true);
+        ad.setId(1L);
         when(adService.getNextAd(USER_ID, SONG_ID)).thenReturn(ad);
 
-        mockMvc.perform(get(NEXT_URL)
-                        .param("userId", String.valueOf(USER_ID))
-                        .param("songId", String.valueOf(SONG_ID))
-                        .with(authentication(auth(UserRole.LISTENER))))
+        mockMvc.perform(get(BASE_PATH)
+                .param(USER_ID_PARAM, USER_ID.toString())
+                .param(SONG_ID_PARAM, SONG_ID.toString())
+                .with(user(LISTENER_USER).roles(LISTENER_ROLE)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.id").value(9))
-                .andExpect(jsonPath("$.data.title").value("Sponsored Track"));
+                .andExpect(jsonPath("$.data.id").value(1));
+
+        verify(adService).getNextAd(USER_ID, SONG_ID);
     }
 
     @Test
-    @DisplayName("GET next ad without JWT returns 403")
-    void getNext_noJwt_forbidden() throws Exception {
-        mockMvc.perform(get(NEXT_URL)
-                        .param("userId", String.valueOf(USER_ID))
-                        .param("songId", String.valueOf(SONG_ID)))
+    @DisplayName("GET next ad without authentication returns 403")
+    void getNextWithoutAuthenticationReturns403() throws Exception {
+        mockMvc.perform(get(BASE_PATH)
+                .param(USER_ID_PARAM, USER_ID.toString())
+                .param(SONG_ID_PARAM, SONG_ID.toString()))
                 .andExpect(status().isForbidden());
+
+        verifyNoInteractions(adService);
     }
 
-    private UsernamePasswordAuthenticationToken auth(UserRole role) {
-        AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(USER_ID, "user", role);
-        return new UsernamePasswordAuthenticationToken(
-                principal,
-                null,
-                List.of(new SimpleGrantedAuthority("ROLE_" + role.name()))
-        );
+    @Test
+    @DisplayName("GET next ad with missing request parameter returns 400")
+    void getNextWithMissingParameterReturns400() throws Exception {
+        mockMvc.perform(get(BASE_PATH)
+                .param(USER_ID_PARAM, USER_ID.toString())
+                .with(user(LISTENER_USER).roles(LISTENER_ROLE)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verifyNoInteractions(adService);
+    }
+
+    @Test
+    @DisplayName("GET next ad propagates bad request from service as 400")
+    void getNextBadRequestFromServiceReturns400() throws Exception {
+        when(adService.getNextAd(USER_ID, SONG_ID))
+                .thenThrow(new BadRequestException("userId and songId are required"));
+
+        mockMvc.perform(get(BASE_PATH)
+                .param(USER_ID_PARAM, USER_ID.toString())
+                .param(SONG_ID_PARAM, SONG_ID.toString())
+                .with(user(LISTENER_USER).roles(LISTENER_ROLE)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+
+        verify(adService).getNextAd(USER_ID, SONG_ID);
     }
 }

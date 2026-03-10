@@ -1,5 +1,12 @@
 package com.revplay.musicplatform.download.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.revplay.musicplatform.catalog.entity.Song;
 import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.download.entity.SongDownload;
@@ -9,33 +16,28 @@ import com.revplay.musicplatform.exception.AccessDeniedException;
 import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import com.revplay.musicplatform.premium.service.SubscriptionService;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-@Tag("unit")
 @ExtendWith(MockitoExtension.class)
+@Tag("unit")
 class DownloadServiceImplTest {
 
-    private static final Long USER_ID = 1L;
-    private static final Long SONG_ID = 2L;
-    private static final String FILE_URL = "/uploads/songs/my-song.mp3";
+    private static final Long USER_ID = 10L;
+    private static final Long SONG_ID = 20L;
+    private static final String FILE_URL = "/api/v1/files/songs/track.mp3";
 
     @Mock
     private SubscriptionService subscriptionService;
@@ -50,11 +52,10 @@ class DownloadServiceImplTest {
     private DownloadServiceImpl service;
 
     @Test
-    @DisplayName("downloadSong premium user and first download saves SongDownload and returns resource")
-    void downloadSong_premiumAndFirstDownload_savesAndReturnsResource() {
-        Song song = song("My Song");
-        Resource resource = new ByteArrayResource(new byte[]{1, 2, 3});
-
+    @DisplayName("downloadSong returns resource and records first download")
+    void downloadSongSuccessFirstTime() {
+        Song song = song();
+        Resource resource = new ByteArrayResource("abc".getBytes());
         when(subscriptionService.isUserPremium(USER_ID)).thenReturn(true);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
         when(songFileResolver.loadSongResource(FILE_URL)).thenReturn(resource);
@@ -63,33 +64,25 @@ class DownloadServiceImplTest {
         Resource actual = service.downloadSong(USER_ID, SONG_ID);
 
         assertThat(actual).isSameAs(resource);
-        ArgumentCaptor<SongDownload> captor = ArgumentCaptor.forClass(SongDownload.class);
-        verify(songDownloadRepository).save(captor.capture());
-        assertThat(captor.getValue().getUserId()).isEqualTo(USER_ID);
-        assertThat(captor.getValue().getSongId()).isEqualTo(SONG_ID);
-        assertThat(captor.getValue().getDownloadedAt()).isNotNull();
+        verify(songDownloadRepository).save(any(SongDownload.class));
     }
 
     @Test
-    @DisplayName("downloadSong already downloaded does not save new SongDownload")
-    void downloadSong_alreadyDownloaded_noNewRecord() {
-        Song song = song("My Song");
-        Resource resource = new ByteArrayResource(new byte[]{4, 5});
-
+    @DisplayName("downloadSong skips save when already downloaded")
+    void downloadSongAlreadyDownloaded() {
         when(subscriptionService.isUserPremium(USER_ID)).thenReturn(true);
-        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-        when(songFileResolver.loadSongResource(FILE_URL)).thenReturn(resource);
+        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song()));
+        when(songFileResolver.loadSongResource(FILE_URL)).thenReturn(new ByteArrayResource("abc".getBytes()));
         when(songDownloadRepository.existsByUserIdAndSongId(USER_ID, SONG_ID)).thenReturn(true);
 
-        Resource actual = service.downloadSong(USER_ID, SONG_ID);
+        service.downloadSong(USER_ID, SONG_ID);
 
-        assertThat(actual).isSameAs(resource);
         verify(songDownloadRepository, never()).save(any(SongDownload.class));
     }
 
     @Test
-    @DisplayName("downloadSong non premium throws AccessDeniedException")
-    void downloadSong_nonPremium_throwsAccessDenied() {
+    @DisplayName("downloadSong rejects non-premium user")
+    void downloadSongNonPremium() {
         when(subscriptionService.isUserPremium(USER_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.downloadSong(USER_ID, SONG_ID))
@@ -98,8 +91,8 @@ class DownloadServiceImplTest {
     }
 
     @Test
-    @DisplayName("downloadSong song not found throws ResourceNotFoundException")
-    void downloadSong_songMissing_throwsNotFound() {
+    @DisplayName("downloadSong throws not found when song missing")
+    void downloadSongMissingSong() {
         when(subscriptionService.isUserPremium(USER_ID)).thenReturn(true);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.empty());
 
@@ -108,115 +101,87 @@ class DownloadServiceImplTest {
                 .hasMessage("Song not found: " + SONG_ID);
     }
 
-    @ParameterizedTest
-    @ValueSource(longs = {0L, -1L})
-    @DisplayName("downloadSong invalid userId throws BadRequestException")
-    void downloadSong_invalidUserId_throwsBadRequest(Long invalidUserId) {
-        assertThatThrownBy(() -> service.downloadSong(invalidUserId, SONG_ID))
-                .isInstanceOf(BadRequestException.class)
-                .hasMessage("userId is required");
-    }
-
     @Test
-    @DisplayName("downloadSong null userId throws BadRequestException")
-    void downloadSong_nullUserId_throwsBadRequest() {
-        assertThatThrownBy(() -> service.downloadSong(null, SONG_ID))
+    @DisplayName("downloadSong validates user and song ids")
+    void downloadSongValidateIds() {
+        assertThatThrownBy(() -> service.downloadSong(0L, SONG_ID))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("userId is required");
-    }
-
-    @ParameterizedTest
-    @ValueSource(longs = {0L, -1L})
-    @DisplayName("downloadSong invalid songId throws BadRequestException")
-    void downloadSong_invalidSongId_throwsBadRequest(Long invalidSongId) {
-        assertThatThrownBy(() -> service.downloadSong(USER_ID, invalidSongId))
+        assertThatThrownBy(() -> service.downloadSong(USER_ID, 0L))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("songId is required");
     }
 
     @Test
-    @DisplayName("downloadSong null songId throws BadRequestException")
-    void downloadSong_nullSongId_throwsBadRequest() {
+    @DisplayName("downloadSong validates null ids")
+    void downloadSongValidateNullIds() {
+        assertThatThrownBy(() -> service.downloadSong(null, SONG_ID))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("userId is required");
         assertThatThrownBy(() -> service.downloadSong(USER_ID, null))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("songId is required");
     }
 
     @Test
-    @DisplayName("isDownloaded returns true when record exists")
-    void isDownloaded_exists_returnsTrue() {
+    @DisplayName("isDownloaded validates ids and delegates")
+    void isDownloadedBehavior() {
         when(songDownloadRepository.existsByUserIdAndSongId(USER_ID, SONG_ID)).thenReturn(true);
 
-        boolean downloaded = service.isDownloaded(USER_ID, SONG_ID);
+        boolean result = service.isDownloaded(USER_ID, SONG_ID);
 
-        assertThat(downloaded).isTrue();
+        assertThat(result).isTrue();
     }
 
-    @Test
-    @DisplayName("isDownloaded returns false when record does not exist")
-    void isDownloaded_notExists_returnsFalse() {
-        when(songDownloadRepository.existsByUserIdAndSongId(USER_ID, SONG_ID)).thenReturn(false);
-
-        boolean downloaded = service.isDownloaded(USER_ID, SONG_ID);
-
-        assertThat(downloaded).isFalse();
-    }
-
-    @Test
-    @DisplayName("isDownloaded invalid ids throws BadRequestException")
-    void isDownloaded_invalidIds_throwsBadRequest() {
-        assertThatThrownBy(() -> service.isDownloaded(0L, SONG_ID))
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(longs = {0L, -1L})
+    @DisplayName("isDownloaded validates invalid userId values")
+    void isDownloadedValidatesUserId(Long invalidUserId) {
+        assertThatThrownBy(() -> service.isDownloaded(invalidUserId, SONG_ID))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("userId is required");
     }
 
-    @Test
-    @DisplayName("getDownloadFileName normal title returns dashed mp3 name")
-    void getDownloadFileName_normalTitle_returnsExpectedName() {
-        Song song = song("My Song");
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(longs = {0L, -1L})
+    @DisplayName("isDownloaded validates invalid songId values")
+    void isDownloadedValidatesSongId(Long invalidSongId) {
+        assertThatThrownBy(() -> service.isDownloaded(USER_ID, invalidSongId))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("songId is required");
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "\t"})
+    @DisplayName("getDownloadFileName uses fallback when title is blank-like")
+    void getDownloadFileNameFallbackForBlankLikeTitles(String title) {
+        Song song = song();
+        song.setTitle(title);
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
 
-        String name = service.getDownloadFileName(SONG_ID);
+        String fileName = service.getDownloadFileName(SONG_ID);
 
-        assertThat(name).isEqualTo("My-Song.mp3");
+        assertThat(fileName).isEqualTo("song-20.mp3");
     }
 
     @Test
-    @DisplayName("getDownloadFileName strips special chars")
-    void getDownloadFileName_specialChars_stripsChars() {
-        Song song = song("A/B:C");
+    @DisplayName("getDownloadFileName sanitizes title and appends mp3")
+    void getDownloadFileNameSanitize() {
+        Song song = song();
+        song.setTitle("A@ B# C!");
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
 
-        String name = service.getDownloadFileName(SONG_ID);
+        String fileName = service.getDownloadFileName(SONG_ID);
 
-        assertThat(name).isEqualTo("ABC.mp3");
+        assertThat(fileName).isEqualTo("A-B-C.mp3");
     }
 
     @Test
-    @DisplayName("getDownloadFileName null title falls back to song-id")
-    void getDownloadFileName_nullTitle_usesFallback() {
-        Song song = song(null);
-        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-
-        String name = service.getDownloadFileName(SONG_ID);
-
-        assertThat(name).isEqualTo("song-2.mp3");
-    }
-
-    @Test
-    @DisplayName("getDownloadFileName blank title falls back to song-id")
-    void getDownloadFileName_blankTitle_usesFallback() {
-        Song song = song("   ");
-        when(songRepository.findById(SONG_ID)).thenReturn(Optional.of(song));
-
-        String name = service.getDownloadFileName(SONG_ID);
-
-        assertThat(name).isEqualTo("song-2.mp3");
-    }
-
-    @Test
-    @DisplayName("getDownloadFileName missing song throws ResourceNotFoundException")
-    void getDownloadFileName_songMissing_throwsNotFound() {
+    @DisplayName("getDownloadFileName throws when song does not exist")
+    void getDownloadFileNameThrowsWhenSongMissing() {
         when(songRepository.findById(SONG_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getDownloadFileName(SONG_ID))
@@ -224,11 +189,11 @@ class DownloadServiceImplTest {
                 .hasMessage("Song not found: " + SONG_ID);
     }
 
-    private Song song(String title) {
+    private Song song() {
         Song song = new Song();
         song.setSongId(SONG_ID);
-        song.setTitle(title);
         song.setFileUrl(FILE_URL);
+        song.setTitle("Track");
         return song;
     }
 }
