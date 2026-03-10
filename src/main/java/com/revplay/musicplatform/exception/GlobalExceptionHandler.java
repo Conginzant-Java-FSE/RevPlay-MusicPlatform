@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BindException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
@@ -112,6 +113,15 @@ public class GlobalExceptionHandler {
             errors = List.of();
         }
         return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", errors);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String parameterName = ex.getName();
+        Object rejectedValue = ex.getValue();
+        String expectedType = ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "valid type";
+        String message = String.format("Invalid value '%s' for '%s'. Expected %s.", rejectedValue, parameterName, expectedType);
+        return buildResponse(HttpStatus.BAD_REQUEST, message, null);
     }
 
     @ExceptionHandler(Exception.class)

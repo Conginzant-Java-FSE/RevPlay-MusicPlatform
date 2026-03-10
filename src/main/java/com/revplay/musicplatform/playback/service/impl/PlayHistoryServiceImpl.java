@@ -3,6 +3,7 @@ package com.revplay.musicplatform.playback.service.impl;
 import java.time.Instant;
 import java.util.List;
 
+import com.revplay.musicplatform.catalog.repository.SongRepository;
 import com.revplay.musicplatform.playback.dto.request.TrackPlayRequest;
 import com.revplay.musicplatform.playback.dto.response.PlayHistoryResponse;
 import com.revplay.musicplatform.playback.entity.PlayHistory;
@@ -28,15 +29,18 @@ public class PlayHistoryServiceImpl implements PlayHistoryService {
     private final JdbcTemplate jdbcTemplate;
     private final PlayHistoryRepository playHistoryRepository;
     private final PlayHistoryMapper playHistoryMapper;
+    private final SongRepository songRepository;
 
     public PlayHistoryServiceImpl(
             JdbcTemplate jdbcTemplate,
             PlayHistoryRepository playHistoryRepository,
-            PlayHistoryMapper playHistoryMapper
+            PlayHistoryMapper playHistoryMapper,
+            SongRepository songRepository
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.playHistoryRepository = playHistoryRepository;
         this.playHistoryMapper = playHistoryMapper;
+        this.songRepository = songRepository;
     }
 
     @Transactional
@@ -72,6 +76,7 @@ public class PlayHistoryServiceImpl implements PlayHistoryService {
         LOGGER.info("Fetching play history for userId={}", userId);
         requireUser(userId);
         return playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(userId).stream()
+                .filter(this::hasActiveSongOrNoSong)
                 .map(playHistoryMapper::toDto)
                 .toList();
     }
@@ -81,6 +86,7 @@ public class PlayHistoryServiceImpl implements PlayHistoryService {
         LOGGER.info("Fetching recently played content for userId={}", userId);
         requireUser(userId);
         return playHistoryRepository.findByUserIdOrderByPlayedAtDescPlayIdDesc(userId, PageRequest.of(0, 50)).stream()
+                .filter(this::hasActiveSongOrNoSong)
                 .map(playHistoryMapper::toDto)
                 .toList();
     }
@@ -116,6 +122,10 @@ public class PlayHistoryServiceImpl implements PlayHistoryService {
             LOGGER.warn("User not found for userId={}", userId);
             throw new PlaybackNotFoundException("User " + userId + " does not exist");
         }
+    }
+
+    private boolean hasActiveSongOrNoSong(PlayHistory history) {
+        return history.getSongId() == null || songRepository.existsBySongIdAndIsActiveTrue(history.getSongId());
     }
 
 }

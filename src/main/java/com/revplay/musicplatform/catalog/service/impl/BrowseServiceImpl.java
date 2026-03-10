@@ -54,6 +54,7 @@ public class BrowseServiceImpl implements BrowseService {
                         s.release_date
                     FROM songs s
                     JOIN artists a ON a.artist_id = s.artist_id
+                    WHERE s.is_active = true
                     UNION ALL
                     SELECT
                         'album' AS type,
@@ -84,7 +85,7 @@ public class BrowseServiceImpl implements BrowseService {
             );
 
             Long total = jdbcTemplate.queryForObject(
-                    "SELECT ((SELECT COUNT(1) FROM songs) + (SELECT COUNT(1) FROM albums))",
+                    "SELECT ((SELECT COUNT(1) FROM songs WHERE is_active = true) + (SELECT COUNT(1) FROM albums))",
                     Long.class
             );
             long totalElements = total == null ? 0 : total;
@@ -212,6 +213,7 @@ public class BrowseServiceImpl implements BrowseService {
                     s.release_date
                 FROM songs s
                 JOIN artists a ON a.artist_id = s.artist_id
+                WHERE s.is_active = true
                 ORDER BY %s %s, s.song_id ASC
                 LIMIT ? OFFSET ?
                 """.formatted(normalizedSortBy, normalizedSortDir);
@@ -223,7 +225,7 @@ public class BrowseServiceImpl implements BrowseService {
                     offset
             );
 
-            Long total = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM songs", Long.class);
+            Long total = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM songs WHERE is_active = true", Long.class);
             long totalElements = total == null ? 0 : total;
             int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / size);
             return new PagedResponseDto<>(items, page, size, totalElements, totalPages, sortBy, normalizedSortDir);
@@ -260,6 +262,7 @@ public class BrowseServiceImpl implements BrowseService {
                 JOIN artists a ON a.artist_id = s.artist_id
                 JOIN song_genres sg ON sg.song_id = s.song_id
                 WHERE sg.genre_id = ?
+                  AND s.is_active = true
                 ORDER BY %s %s, s.song_id ASC
                 LIMIT ? OFFSET ?
                 """.formatted(normalizedSortBy, normalizedSortDir);
@@ -273,7 +276,7 @@ public class BrowseServiceImpl implements BrowseService {
             );
 
             Long total = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(DISTINCT s.song_id) FROM songs s JOIN song_genres sg ON sg.song_id = s.song_id WHERE sg.genre_id = ?",
+                    "SELECT COUNT(DISTINCT s.song_id) FROM songs s JOIN song_genres sg ON sg.song_id = s.song_id WHERE sg.genre_id = ? AND s.is_active = true",
                     Long.class,
                     genreId
             );

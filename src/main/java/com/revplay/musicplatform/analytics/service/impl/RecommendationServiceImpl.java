@@ -33,6 +33,8 @@ public class RecommendationServiceImpl implements RecommendationService {
             JOIN artists a ON a.artist_id = s2.artist_id
             LEFT JOIN play_history ph ON ph.song_id = s2.song_id
             WHERE s1.song_id = ?
+              AND s1.is_active = true
+              AND s2.is_active = true
             GROUP BY s2.song_id, s2.title, a.artist_id, a.display_name
             ORDER BY score DESC, s2.song_id ASC
             LIMIT ?
@@ -52,7 +54,9 @@ public class RecommendationServiceImpl implements RecommendationService {
               SELECT sg2.genre_id
               FROM play_history ph2
               JOIN song_genres sg2 ON sg2.song_id = ph2.song_id
+              JOIN songs s2 ON s2.song_id = ph2.song_id
               WHERE ph2.user_id = ?
+                AND s2.is_active = true
               GROUP BY sg2.genre_id
               ORDER BY COUNT(*) DESC
               LIMIT 5
@@ -60,6 +64,7 @@ public class RecommendationServiceImpl implements RecommendationService {
             AND s.song_id NOT IN (
               SELECT DISTINCT ph3.song_id FROM play_history ph3 WHERE ph3.user_id = ? AND ph3.song_id IS NOT NULL
             )
+            WHERE s.is_active = true
             GROUP BY s.song_id, s.title, a.artist_id, a.display_name
             ORDER BY score DESC, s.song_id ASC
             LIMIT ?
@@ -71,10 +76,7 @@ public class RecommendationServiceImpl implements RecommendationService {
               a.artist_id,
               a.display_name AS artist_name,
               COUNT(ph_candidate.play_id) AS score
-            FROM play_history ph_candidate
-            JOIN songs s ON s.song_id = ph_candidate.song_id
-            JOIN artists a ON a.artist_id = s.artist_id
-            WHERE ph_candidate.user_id IN (
+            FROM (
               SELECT ph_other.user_id
               FROM play_history ph_self
               JOIN play_history ph_other ON ph_self.song_id = ph_other.song_id
@@ -82,10 +84,14 @@ public class RecommendationServiceImpl implements RecommendationService {
               GROUP BY ph_other.user_id
               ORDER BY COUNT(*) DESC
               LIMIT 20
-            )
-            AND ph_candidate.song_id NOT IN (
+            ) similar_users
+            JOIN play_history ph_candidate ON ph_candidate.user_id = similar_users.user_id
+            JOIN songs s ON s.song_id = ph_candidate.song_id
+            JOIN artists a ON a.artist_id = s.artist_id
+            WHERE ph_candidate.song_id NOT IN (
               SELECT DISTINCT ph_seen.song_id FROM play_history ph_seen WHERE ph_seen.user_id = ? AND ph_seen.song_id IS NOT NULL
             )
+              AND s.is_active = true
             GROUP BY s.song_id, s.title, a.artist_id, a.display_name
             ORDER BY score DESC, s.song_id ASC
             LIMIT ?

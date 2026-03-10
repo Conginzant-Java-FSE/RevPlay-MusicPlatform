@@ -56,6 +56,7 @@ public class DiscoveryFeedServiceImpl implements DiscoveryFeedService {
                 WHERE ph3.user_id = ?
                   AND ph3.song_id IS NOT NULL
             )
+              AND s.is_active = true
               AND s.release_date >= (CURRENT_DATE - INTERVAL 365 DAY)
             GROUP BY s.song_id, s.title, a.artist_id, a.display_name, s.release_date
             ORDER BY score DESC, RAND(?)

@@ -32,19 +32,19 @@ public class ArtistAnalyticsServiceImpl implements ArtistAnalyticsService {
     private static final String DASHBOARD_SQL = """
             SELECT
               ? AS artist_id,
-              (SELECT COUNT(*) FROM songs s WHERE s.artist_id = ?) AS total_songs,
+              (SELECT COUNT(*) FROM songs s WHERE s.artist_id = ? AND s.is_active = true) AS total_songs,
               (SELECT COUNT(*) FROM play_history ph
                JOIN songs s ON s.song_id = ph.song_id
-               WHERE s.artist_id = ?) AS total_plays,
+               WHERE s.artist_id = ? AND s.is_active = true) AS total_plays,
               (SELECT COUNT(*) FROM user_likes ul
                JOIN songs s ON s.song_id = ul.likeable_id
-               WHERE ul.likeable_type = 'SONG' AND s.artist_id = ?) AS total_favorites
+               WHERE ul.likeable_type = 'SONG' AND s.artist_id = ? AND s.is_active = true) AS total_favorites
             """;
     private static final String SONG_PLAY_COUNT_SQL = """
             SELECT s.song_id, s.title, COUNT(ph.play_id) AS play_count
             FROM songs s
             LEFT JOIN play_history ph ON ph.song_id = s.song_id
-            WHERE s.artist_id = ? AND s.song_id = ?
+            WHERE s.artist_id = ? AND s.song_id = ? AND s.is_active = true
             GROUP BY s.song_id, s.title
             """;
     private static final String SONG_POPULARITY_SQL = """
@@ -56,7 +56,7 @@ public class ArtistAnalyticsServiceImpl implements ArtistAnalyticsService {
             FROM songs s
             LEFT JOIN play_history ph ON ph.song_id = s.song_id
             LEFT JOIN user_likes ul ON ul.likeable_id = s.song_id AND ul.likeable_type = 'SONG'
-            WHERE s.artist_id = ?
+            WHERE s.artist_id = ? AND s.is_active = true
             GROUP BY s.song_id, s.title
             ORDER BY play_count DESC, favorite_count DESC, s.song_id ASC
             """;
@@ -71,7 +71,7 @@ public class ArtistAnalyticsServiceImpl implements ArtistAnalyticsService {
             JOIN songs s ON s.song_id = ul.likeable_id
             JOIN users u ON u.user_id = ul.user_id
             LEFT JOIN user_profiles up ON up.user_id = u.user_id
-            WHERE s.artist_id = ? AND ul.likeable_type = 'SONG'
+            WHERE s.artist_id = ? AND ul.likeable_type = 'SONG' AND s.is_active = true
             GROUP BY u.user_id, u.username, u.email, up.full_name
             ORDER BY favorited_at DESC
             """;
@@ -86,7 +86,7 @@ public class ArtistAnalyticsServiceImpl implements ArtistAnalyticsService {
             JOIN songs s ON s.song_id = ph.song_id
             JOIN users u ON u.user_id = ph.user_id
             LEFT JOIN user_profiles up ON up.user_id = u.user_id
-            WHERE s.artist_id = ?
+            WHERE s.artist_id = ? AND s.is_active = true
             GROUP BY u.user_id, u.username, u.email, up.full_name
             ORDER BY play_count DESC, u.user_id ASC
             LIMIT ?
@@ -206,6 +206,7 @@ public class ArtistAnalyticsServiceImpl implements ArtistAnalyticsService {
                 FROM play_history ph
                 JOIN songs s ON s.song_id = ph.song_id
                 WHERE s.artist_id = ?
+                  AND s.is_active = true
                   AND ph.played_at >= ?
                   AND ph.played_at < DATE_ADD(?, INTERVAL 1 DAY)
                 GROUP BY bucket

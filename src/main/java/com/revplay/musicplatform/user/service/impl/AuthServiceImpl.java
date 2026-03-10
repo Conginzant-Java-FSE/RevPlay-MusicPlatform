@@ -1,5 +1,6 @@
 package com.revplay.musicplatform.user.service.impl;
 
+
 import com.revplay.musicplatform.security.JwtProperties;
 import com.revplay.musicplatform.user.service.AuthService;
 import com.revplay.musicplatform.user.service.EmailService;
@@ -87,32 +88,41 @@ public class AuthServiceImpl implements AuthService {
         LOGGER.info("Registering user with username={}", request == null ? null : request.username());
         validateRegisterRequest(request);
 
-        if (userRepository.existsByEmailIgnoreCase(request.email())) {
+        String normalizedEmail = request.email().trim().toLowerCase();
+        String normalizedUsername = request.username().trim();
+        String normalizedFullName = request.fullName().trim();
+
+        User existingByEmail = userRepository.findByEmailIgnoreCase(normalizedEmail).orElse(null);
+        if (existingByEmail != null && Boolean.TRUE.equals(existingByEmail.getIsActive())) {
             throw new AuthConflictException("Email already exists");
         }
-        if (userRepository.existsByUsernameIgnoreCase(request.username())) {
+
+        User existingByUsername = userRepository.findByUsernameIgnoreCase(normalizedUsername).orElse(null);
+        if (existingByUsername != null
+                && (existingByEmail == null || !existingByUsername.getUserId().equals(existingByEmail.getUserId()))) {
             throw new AuthConflictException("Username already exists");
         }
 
-        User user = new User();
-        user.setEmail(request.email().trim().toLowerCase());
-        user.setUsername(request.username().trim());
+        Instant now = Instant.now();
+        User user = existingByEmail != null ? existingByEmail : new User();
+        user.setEmail(normalizedEmail);
+        user.setUsername(normalizedUsername);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setRole(resolveRequestedRole(request.role()));
         user.setIsActive(Boolean.TRUE);
         user.setEmailVerified(Boolean.FALSE);
-        user.setCreatedAt(Instant.now());
-        user.setUpdatedAt(Instant.now());
+        user.setCreatedAt(existingByEmail == null ? now : user.getCreatedAt());
+        user.setUpdatedAt(now);
         User savedUser = userRepository.save(user);
 
-        UserProfile profile = new UserProfile();
+        UserProfile profile = userProfileRepository.findByUserId(savedUser.getUserId()).orElseGet(UserProfile::new);
         profile.setUserId(savedUser.getUserId());
-        profile.setFullName(request.fullName().trim());
+        profile.setFullName(normalizedFullName);
         profile.setBio(null);
         profile.setProfilePictureUrl(null);
         profile.setCountry(null);
-        profile.setCreatedAt(Instant.now());
-        profile.setUpdatedAt(Instant.now());
+        profile.setCreatedAt(profile.getCreatedAt() == null ? now : profile.getCreatedAt());
+        profile.setUpdatedAt(now);
         userProfileRepository.save(profile);
 
         String otp = OtpGeneratorUtil.generateOtp();

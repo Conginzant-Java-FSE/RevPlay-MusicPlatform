@@ -83,7 +83,7 @@ public class PlaybackAnalyticsController {
         return ResponseEntity.ok(playbackAnalyticsService.topContent(type, limit));
     }
 
-    @GetMapping("/user-stats/{userId}")
+    @GetMapping("/user-stats/{userId:\\d+}")
     @Operation(summary = "Get listening statistics for a user")
     public ResponseEntity<UserListeningStatsResponse> userStats(@PathVariable Long userId) {
         return ResponseEntity.ok(playbackAnalyticsService.userStats(userId));
