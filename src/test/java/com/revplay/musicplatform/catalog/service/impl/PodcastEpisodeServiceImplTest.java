@@ -34,6 +34,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.web.multipart.MultipartFile;
 
 @ExtendWith(MockitoExtension.class)
@@ -169,6 +171,75 @@ class PodcastEpisodeServiceImplTest {
         assertThatThrownBy(() -> service.update(PODCAST_ID, EPISODE_ID, request))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessage("Podcast not found");
+    }
+
+    @Test
+    @DisplayName("get throws when episode belongs to another podcast")
+    void getEpisodeFromAnotherPodcast() {
+        when(episodeRepository.findById(EPISODE_ID))
+                .thenReturn(Optional.of(episode(EPISODE_ID, PODCAST_ID + 1, "/api/v1/files/podcasts/ep.mp3")));
+
+        assertThatThrownBy(() -> service.get(PODCAST_ID, EPISODE_ID))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Episode not found");
+    }
+
+    @Test
+    @DisplayName("replace audio deletes previous file when old file name is present")
+    void replaceAudioDeletesPreviousFile() {
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, "/api/v1/files/podcasts/old.mp3");
+        PodcastEpisodeResponse response = episodeResponse(EPISODE_ID, "Ep1");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast(PODCAST_ID, ARTIST_ID)));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID)));
+        when(audioMetadataService.resolveDurationSeconds(audioFile, episode.getDurationSeconds())).thenReturn(900);
+        when(fileStorageService.storePodcast(audioFile)).thenReturn("new.mp3");
+        when(episodeRepository.save(episode)).thenReturn(episode);
+        when(mapper.toResponse(episode)).thenReturn(response);
+
+        PodcastEpisodeResponse actual = service.replaceAudio(PODCAST_ID, EPISODE_ID, audioFile);
+
+        assertThat(actual.getEpisodeId()).isEqualTo(EPISODE_ID);
+        assertThat(episode.getAudioUrl()).isEqualTo("/api/v1/files/podcasts/new.mp3");
+        assertThat(episode.getDurationSeconds()).isEqualTo(900);
+        verify(fileStorageService).deletePodcastFile("old.mp3");
+    }
+
+    @Test
+    @DisplayName("replace audio skips delete when previous file name cannot be extracted")
+    void replaceAudioSkipsDeleteWhenPreviousFileMissing() {
+        PodcastEpisode episode = episode(EPISODE_ID, PODCAST_ID, "invalid-url");
+        PodcastEpisodeResponse response = episodeResponse(EPISODE_ID, "Ep1");
+        when(securityUtil.getUserRole()).thenReturn(ROLE_ARTIST);
+        when(securityUtil.getUserId()).thenReturn(USER_ID);
+        when(episodeRepository.findById(EPISODE_ID)).thenReturn(Optional.of(episode));
+        when(podcastRepository.findById(PODCAST_ID)).thenReturn(Optional.of(podcast(PODCAST_ID, ARTIST_ID)));
+        when(artistRepository.findById(ARTIST_ID)).thenReturn(Optional.of(artist(ARTIST_ID, USER_ID)));
+        when(audioMetadataService.resolveDurationSeconds(audioFile, episode.getDurationSeconds())).thenReturn(900);
+        when(fileStorageService.storePodcast(audioFile)).thenReturn("new.mp3");
+        when(episodeRepository.save(episode)).thenReturn(episode);
+        when(mapper.toResponse(episode)).thenReturn(response);
+
+        service.replaceAudio(PODCAST_ID, EPISODE_ID, audioFile);
+
+        verify(fileStorageService, never()).deletePodcastFile(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("listByPodcast maps repository page to response page")
+    void listByPodcastMapsResponses() {
+        PodcastEpisode first = episode(EPISODE_ID, PODCAST_ID, "/api/v1/files/podcasts/ep.mp3");
+        PodcastEpisodeResponse firstResponse = episodeResponse(EPISODE_ID, "Ep1");
+        when(episodeRepository.findByPodcastId(PODCAST_ID, PageRequest.of(0, 2)))
+                .thenReturn(new PageImpl<>(java.util.List.of(first), PageRequest.of(0, 2), 1));
+        when(mapper.toResponse(first)).thenReturn(firstResponse);
+
+        var page = service.listByPodcast(PODCAST_ID, PageRequest.of(0, 2));
+
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getContent().get(0).getEpisodeId()).isEqualTo(EPISODE_ID);
     }
 
     private Podcast podcast(Long podcastId, Long artistId) {

@@ -2,6 +2,7 @@ package com.revplay.musicplatform.catalog.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.revplay.musicplatform.catalog.entity.Album;
@@ -55,6 +56,28 @@ class ContentValidationServiceImplTest {
     }
 
     @Test
+    @DisplayName("validateSongDuration above maximum throws exception")
+    void validateSongDurationAboveMaximum() {
+        assertThatThrownBy(() -> service.validateSongDuration(3601))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("song duration exceeds allowed limit");
+    }
+
+    @Test
+    @DisplayName("validatePodcastEpisodeDuration valid value passes")
+    void validatePodcastEpisodeDurationValid() {
+        assertThatCode(() -> service.validatePodcastEpisodeDuration(7200)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("validatePodcastEpisodeDuration above maximum throws exception")
+    void validatePodcastEpisodeDurationAboveMaximum() {
+        assertThatThrownBy(() -> service.validatePodcastEpisodeDuration(10801))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage("podcast episode duration exceeds allowed limit");
+    }
+
+    @Test
     @DisplayName("validateAlbumBelongsToArtist with null album does nothing")
     void validateAlbumBelongsToArtistNullAlbum() {
         assertThatCode(() -> service.validateAlbumBelongsToArtist(null, ARTIST_ID)).doesNotThrowAnyException();
@@ -102,6 +125,23 @@ class ContentValidationServiceImplTest {
     }
 
     @Test
+    @DisplayName("validateUniqueSongTitleWithinAlbum ignores blank title")
+    void validateUniqueSongTitleBlankTitle() {
+        assertThatCode(() -> service.validateUniqueSongTitleWithinAlbum(ALBUM_ID, "   ")).doesNotThrowAnyException();
+
+        verifyNoInteractions(songRepository);
+    }
+
+    @Test
+    @DisplayName("validateUniqueSongTitleWithinAlbum trims title before lookup")
+    void validateUniqueSongTitleTrimsTitle() {
+        when(songRepository.existsByAlbumIdAndTitleIgnoreCaseAndIsActiveTrue(ALBUM_ID, TITLE)).thenReturn(false);
+
+        assertThatCode(() -> service.validateUniqueSongTitleWithinAlbum(ALBUM_ID, "  " + TITLE + "  "))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("validateUniqueSongTitleWithinAlbumForUpdate same song id passes")
     void validateUniqueForUpdateSameSongId() {
         when(songRepository.existsByAlbumIdAndTitleIgnoreCaseAndIsActiveTrueAndSongIdNot(ALBUM_ID, TITLE, SONG_ID)).thenReturn(false);
@@ -115,6 +155,15 @@ class ContentValidationServiceImplTest {
         assertThatThrownBy(() -> service.validateUniqueSongTitleWithinAlbumForUpdate(ALBUM_ID, TITLE, SONG_ID))
                 .isInstanceOf(BadRequestException.class)
                 .hasMessage("Duplicate song title exists in album");
+    }
+
+    @Test
+    @DisplayName("validateUniqueSongTitleWithinAlbumForUpdate ignores null song id")
+    void validateUniqueForUpdateNullSongId() {
+        assertThatCode(() -> service.validateUniqueSongTitleWithinAlbumForUpdate(ALBUM_ID, TITLE, null))
+                .doesNotThrowAnyException();
+
+        verifyNoInteractions(songRepository);
     }
 
     private static Stream<Arguments> invalidDurations() {

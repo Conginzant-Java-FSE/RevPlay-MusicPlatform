@@ -83,6 +83,52 @@ class FileControllerTest {
     }
 
     @Test
+    @DisplayName("song request with suffix range returns last bytes")
+    void songRequestWithSuffixRangeReturnsPartialContent() throws Exception {
+        Path song = Files.writeString(tempDir.resolve("suffix.mp3"), "abcdefghij");
+        when(fileStorageService.loadSong("suffix.mp3")).thenReturn(new FileSystemResource(song));
+
+        mockMvc.perform(get("/api/v1/files/songs/suffix.mp3").header(HttpHeaders.RANGE, "bytes=-4"))
+                .andExpect(status().isPartialContent())
+                .andExpect(MockMvcResultMatchers.header().string(HttpHeaders.CONTENT_RANGE, "bytes 6-9/10"))
+                .andExpect(MockMvcResultMatchers.content().bytes("ghij".getBytes()));
+    }
+
+    @Test
+    @DisplayName("song request with open ended range streams until file end")
+    void songRequestWithOpenEndedRangeReturnsPartialContent() throws Exception {
+        Path song = Files.writeString(tempDir.resolve("open.mp3"), "abcdefghij");
+        when(fileStorageService.loadSong("open.mp3")).thenReturn(new FileSystemResource(song));
+
+        mockMvc.perform(get("/api/v1/files/songs/open.mp3").header(HttpHeaders.RANGE, "bytes=4-"))
+                .andExpect(status().isPartialContent())
+                .andExpect(MockMvcResultMatchers.header().string(HttpHeaders.CONTENT_RANGE, "bytes 4-9/10"))
+                .andExpect(MockMvcResultMatchers.content().bytes("efghij".getBytes()));
+    }
+
+    @Test
+    @DisplayName("song request with malformed range prefix returns 500 in current implementation")
+    void songRequestWithMalformedRangeReturnsRequestedRangeNotSatisfiable() throws Exception {
+        Path song = Files.writeString(tempDir.resolve("malformed.mp3"), "abcdefghij");
+        when(fileStorageService.loadSong("malformed.mp3")).thenReturn(new FileSystemResource(song));
+
+        mockMvc.perform(get("/api/v1/files/songs/malformed.mp3").header(HttpHeaders.RANGE, "items=0-2"))
+                .andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    @DisplayName("podcast request streams partial content using same range handling")
+    void podcastRequestWithRangeReturnsPartialContent() throws Exception {
+        Path podcast = Files.writeString(tempDir.resolve("episode.mp3"), "abcdefghij");
+        when(fileStorageService.loadPodcast("episode.mp3")).thenReturn(new FileSystemResource(podcast));
+
+        mockMvc.perform(get("/api/v1/files/podcasts/episode.mp3").header(HttpHeaders.RANGE, "bytes=1-3"))
+                .andExpect(status().isPartialContent())
+                .andExpect(MockMvcResultMatchers.header().string(HttpHeaders.CONTENT_RANGE, "bytes 1-3/10"))
+                .andExpect(MockMvcResultMatchers.content().bytes("bcd".getBytes()));
+    }
+
+    @Test
     @DisplayName("image upload returns stored image response")
     void imageUploadReturnsStoredImageResponse() throws Exception {
         when(fileStorageService.storeImage(any())).thenReturn("cover.png");

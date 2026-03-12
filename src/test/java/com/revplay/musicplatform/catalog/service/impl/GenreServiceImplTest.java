@@ -2,6 +2,7 @@ package com.revplay.musicplatform.catalog.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.revplay.musicplatform.catalog.dto.request.GenreUpsertRequest;
@@ -60,6 +61,23 @@ class GenreServiceImplTest {
     }
 
     @Test
+    @DisplayName("create reactivates inactive genre with normalized description")
+    void createReactivatesInactiveGenre() {
+        GenreUpsertRequest request = new GenreUpsertRequest("  " + NAME + "  ", "  revived  ");
+        Genre inactive = genre(GENRE_ID, NAME, false);
+        inactive.setDescription("old");
+        when(genreRepository.existsByNameIgnoreCaseAndIsActiveTrue(NAME)).thenReturn(false);
+        when(genreRepository.findByNameIgnoreCaseAndIsActiveFalse(NAME)).thenReturn(Optional.of(inactive));
+        when(genreRepository.save(inactive)).thenReturn(inactive);
+
+        GenreResponse response = service.create(request);
+
+        assertThat(response.genreId()).isEqualTo(GENRE_ID);
+        assertThat(inactive.getIsActive()).isTrue();
+        assertThat(inactive.getDescription()).isEqualTo("revived");
+    }
+
+    @Test
     @DisplayName("getAll returns active genres list")
     void getAllGenres() {
         when(genreRepository.findByIsActiveTrueOrderByNameAscGenreIdAsc()).thenReturn(List.of(genre(GENRE_ID, NAME, true)));
@@ -87,6 +105,69 @@ class GenreServiceImplTest {
         assertThatThrownBy(() -> service.getById(GENRE_ID))
                 .isInstanceOf(DiscoveryNotFoundException.class)
                 .hasMessage("Genre " + GENRE_ID + " not found");
+    }
+
+    @Test
+    @DisplayName("update existing genre saves normalized values")
+    void updateGenre() {
+        Genre genre = genre(GENRE_ID, NAME, true);
+        when(genreRepository.findByGenreIdAndIsActiveTrue(GENRE_ID)).thenReturn(Optional.of(genre));
+        when(genreRepository.existsByNameIgnoreCaseAndIsActiveTrueAndGenreIdNot("Indie", GENRE_ID)).thenReturn(false);
+        when(genreRepository.save(genre)).thenReturn(genre);
+
+        GenreResponse response = service.update(GENRE_ID, new GenreUpsertRequest("  Indie  ", "  airy  "));
+
+        assertThat(response.genreId()).isEqualTo(GENRE_ID);
+        assertThat(genre.getName()).isEqualTo("Indie");
+        assertThat(genre.getDescription()).isEqualTo("airy");
+    }
+
+    @Test
+    @DisplayName("update duplicate active name throws validation exception")
+    void updateDuplicateName() {
+        when(genreRepository.findByGenreIdAndIsActiveTrue(GENRE_ID)).thenReturn(Optional.of(genre(GENRE_ID, NAME, true)));
+        when(genreRepository.existsByNameIgnoreCaseAndIsActiveTrueAndGenreIdNot("Indie", GENRE_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.update(GENRE_ID, new GenreUpsertRequest("Indie", "desc")))
+                .isInstanceOf(DiscoveryValidationException.class)
+                .hasMessage("Genre name already exists");
+    }
+
+    @Test
+    @DisplayName("update with blank description stores null")
+    void updateBlankDescriptionStoresNull() {
+        Genre genre = genre(GENRE_ID, NAME, true);
+        genre.setDescription("before");
+        when(genreRepository.findByGenreIdAndIsActiveTrue(GENRE_ID)).thenReturn(Optional.of(genre));
+        when(genreRepository.existsByNameIgnoreCaseAndIsActiveTrueAndGenreIdNot(NAME, GENRE_ID)).thenReturn(false);
+        when(genreRepository.save(genre)).thenReturn(genre);
+
+        service.update(GENRE_ID, new GenreUpsertRequest(NAME, "   "));
+
+        assertThat(genre.getDescription()).isNull();
+    }
+
+    @Test
+    @DisplayName("delete soft deletes active genre")
+    void deleteGenre() {
+        Genre genre = genre(GENRE_ID, NAME, true);
+        when(genreRepository.findByGenreIdAndIsActiveTrue(GENRE_ID)).thenReturn(Optional.of(genre));
+        when(genreRepository.save(genre)).thenReturn(genre);
+
+        service.delete(GENRE_ID);
+
+        assertThat(genre.getIsActive()).isFalse();
+        verify(genreRepository).save(genre);
+    }
+
+    @Test
+    @DisplayName("create rejects too long description")
+    void createRejectsTooLongDescription() {
+        String longDescription = "a".repeat(1001);
+
+        assertThatThrownBy(() -> service.create(new GenreUpsertRequest(NAME, longDescription)))
+                .isInstanceOf(DiscoveryValidationException.class)
+                .hasMessage("description must be at most 1000 characters");
     }
 
     private Genre genre(Long id, String name, boolean active) {
