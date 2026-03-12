@@ -69,6 +69,28 @@ class SearchControllerTest {
     }
 
     @Test
+    @DisplayName("search uses real ip header when forwarded for is absent")
+    void searchUsesRealIpHeader() throws Exception {
+        when(searchService.search(any())).thenReturn(new PagedResponseDto<>(List.of(), 0, 20, 0, 0, "releaseDate", "DESC"));
+
+        mockMvc.perform(get("/api/v1/search").param("q", "find").header("X-Real-IP", "5.6.7.8"))
+                .andExpect(status().isOk());
+
+        verify(discoveryRateLimiterService).ensureWithinLimit(eq("search:5.6.7.8"), eq(60), eq(60), any());
+    }
+
+    @Test
+    @DisplayName("search falls back to remote address when headers are absent")
+    void searchFallsBackToRemoteAddress() throws Exception {
+        when(searchService.search(any())).thenReturn(new PagedResponseDto<>(List.of(), 0, 20, 0, 0, "releaseDate", "DESC"));
+
+        mockMvc.perform(get("/api/v1/search").param("q", "find"))
+                .andExpect(status().isOk());
+
+        verify(discoveryRateLimiterService).ensureWithinLimit(eq("search:127.0.0.1"), eq(60), eq(60), any());
+    }
+
+    @Test
     @DisplayName("playlist search returns paged response")
     void playlistSearchReturnsPagedResponse() throws Exception {
         PlaylistResponse response = PlaylistResponse.builder().id(5L).name("Chill").userId(3L).createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now()).build();

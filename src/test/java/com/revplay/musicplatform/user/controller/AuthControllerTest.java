@@ -3,6 +3,7 @@ package com.revplay.musicplatform.user.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -153,6 +154,21 @@ class AuthControllerTest {
         }
 
         @Test
+        @DisplayName("login uses forwarded client address when header is present")
+        void loginUsesForwardedClientAddress() throws Exception {
+                LoginRequest request = new LoginRequest(TEST_EMAIL, TEST_PASSWORD);
+                when(authService.login(any(LoginRequest.class), any(String.class))).thenReturn(tokenResponse());
+
+                mockMvc.perform(post(BASE_URL + "/login")
+                                .header("X-Forwarded-For", "9.8.7.6, 1.1.1.1")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isOk());
+
+                verify(authService).login(any(LoginRequest.class), eq("9.8.7.6"));
+        }
+
+        @Test
         @DisplayName("login unauthorized maps to 401")
         void loginUnauthorized() throws Exception {
                 LoginRequest request = new LoginRequest(TEST_EMAIL, "bad");
@@ -204,6 +220,26 @@ class AuthControllerTest {
                                 .with(authentication(authenticationToken)))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.data.message").value(LOGOUT_SUCCESS));
+        }
+
+        @Test
+        @DisplayName("logout with authenticated user and non bearer header passes null token to service")
+        void logoutWithoutBearerHeader() throws Exception {
+                AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(TEST_USER_ID, TEST_USERNAME,
+                                UserRole.LISTENER);
+                UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
+                                principal,
+                                null,
+                                java.util.List.of(new SimpleGrantedAuthority("ROLE_LISTENER")));
+                when(authService.logout(null)).thenReturn(new SimpleMessageResponse(LOGOUT_SUCCESS));
+
+                mockMvc.perform(post(BASE_URL + "/logout")
+                                .header(HttpHeaders.AUTHORIZATION, "Token " + ACCESS_TOKEN)
+                                .with(authentication(authenticationToken)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.data.message").value(LOGOUT_SUCCESS));
+
+                verify(authService).logout(null);
         }
 
         @Test

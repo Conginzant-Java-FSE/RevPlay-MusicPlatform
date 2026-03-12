@@ -70,6 +70,17 @@ class AuthContextUtilTest {
     }
 
     @Test
+    @DisplayName("getCurrentUserIdOrNull returns null when authentication exists but is not authenticated")
+    void getCurrentUserIdReturnsNullWhenAuthenticationIsNotAuthenticated() {
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken("29", null);
+        SecurityContextHolder.getContext().setAuthentication(auth);
+
+        Long userId = authContextUtil.getCurrentUserIdOrNull();
+
+        assertThat(userId).isNull();
+    }
+
+    @Test
     @DisplayName("getCurrentUserIdOrNull extracts numeric principal")
     void getCurrentUserIdFromNumericPrincipal() {
         setAuth(19L, List.of());
@@ -97,6 +108,30 @@ class AuthContextUtilTest {
         Long userId = authContextUtil.getCurrentUserIdOrNull();
 
         assertThat(userId).isEqualTo(41L);
+    }
+
+    @Test
+    @DisplayName("getCurrentUserIdOrNull extracts userId key from details map")
+    void getCurrentUserIdFromDetailsUserIdKey() {
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken("anonymous", null, List.of());
+        auth.setDetails(Map.of("userId", 88L));
+        SecurityContextHolder.getContext().setAuthentication(auth);
+
+        Long userId = authContextUtil.getCurrentUserIdOrNull();
+
+        assertThat(userId).isEqualTo(88L);
+    }
+
+    @Test
+    @DisplayName("getCurrentUserIdOrNull returns null when principal and details do not expose numeric id")
+    void getCurrentUserIdReturnsNullForUnsupportedPrincipalAndDetails() {
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken("not-a-number", null, List.of());
+        auth.setDetails(Map.of("unknown", "value"));
+        SecurityContextHolder.getContext().setAuthentication(auth);
+
+        Long userId = authContextUtil.getCurrentUserIdOrNull();
+
+        assertThat(userId).isNull();
     }
 
     @Test
@@ -140,6 +175,16 @@ class AuthContextUtilTest {
     }
 
     @Test
+    @DisplayName("hasRole falls back to record principal role accessor")
+    void hasRoleFromRecordPrincipalRole() {
+        setAuth(new RecordStylePrincipal(61L, "ADMIN"), List.of());
+
+        boolean result = authContextUtil.hasRole("ADMIN");
+
+        assertThat(result).isTrue();
+    }
+
+    @Test
     @DisplayName("hasRole returns false when authentication is missing")
     void hasRoleWithoutAuthentication() {
         SecurityContextHolder.clearContext();
@@ -153,6 +198,17 @@ class AuthContextUtilTest {
     @DisplayName("hasRole returns false when no authority or principal role matches")
     void hasRoleReturnsFalseForMismatch() {
         setAuth(new GetterPrincipal("7", "listener"), List.of(new SimpleGrantedAuthority("ROLE_ARTIST")));
+
+        boolean result = authContextUtil.hasRole("ADMIN");
+
+        assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("hasRole returns false when authentication exists but is not authenticated")
+    void hasRoleReturnsFalseWhenAuthenticationIsNotAuthenticated() {
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken("principal", null);
+        SecurityContextHolder.getContext().setAuthentication(auth);
 
         boolean result = authContextUtil.hasRole("ADMIN");
 

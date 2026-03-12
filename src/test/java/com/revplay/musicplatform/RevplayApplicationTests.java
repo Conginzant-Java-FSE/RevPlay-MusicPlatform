@@ -9,5 +9,4 @@ class RevplayApplicationTests {
     @Test
     void contextLoads() {
     }
-
 }
