@@ -6,10 +6,17 @@ import com.revplay.musicplatform.catalog.dto.request.PodcastCreateRequest;
 import com.revplay.musicplatform.catalog.dto.request.PodcastUpdateRequest;
 import com.revplay.musicplatform.catalog.dto.response.PodcastResponse;
 import com.revplay.musicplatform.catalog.entity.Podcast;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import org.springframework.stereotype.Component;
 
 @Component
 public class PodcastMapper {
+    private final MediaUrlResolver mediaUrlResolver;
+
+    public PodcastMapper(MediaUrlResolver mediaUrlResolver) {
+        this.mediaUrlResolver = mediaUrlResolver;
+    }
+
     public Podcast toEntity(PodcastCreateRequest request, Long artistId) {
         Podcast podcast = new Podcast();
         podcast.setArtistId(artistId);
@@ -36,7 +43,7 @@ public class PodcastMapper {
         response.setCategoryId(podcast.getCategoryId());
         response.setTitle(podcast.getTitle());
         response.setDescription(podcast.getDescription());
-        response.setCoverImageUrl(podcast.getCoverImageUrl());
+        response.setCoverImageUrl(mediaUrlResolver.toAbsoluteUrl(podcast.getCoverImageUrl()));
         response.setVisibility(podcast.getVisibility());
         response.setCreatedAt(podcast.getCreatedAt());
         return response;

@@ -28,6 +28,7 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+        <aws.sdk.version>2.25.53</aws.sdk.version>
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.3.0</springdoc.version>
         <lombok.version>1.18.30</lombok.version>
@@ -119,6 +120,26 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
             <version>2.15.1</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>auth</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>regions</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sdk-core</artifactId>
+            <version>${aws.sdk.version}</version>
         </dependency>
     </dependencies>
 

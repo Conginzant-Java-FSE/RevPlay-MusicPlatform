@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.revplay.musicplatform.catalog.util.FileStorageService;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import com.revplay.musicplatform.common.response.ApiResponseBodyAdvice;
 import com.revplay.musicplatform.config.FileStorageProperties;
 import com.revplay.musicplatform.exception.GlobalExceptionHandler;
@@ -45,6 +46,7 @@ class FileControllerTest {
     @MockBean private JwtAuthenticationFilter jwtAuthenticationFilter;
     @MockBean private FileStorageProperties fileStorageProperties;
     @MockBean private JpaMetamodelMappingContext jpaMetamodelMappingContext;
+    @MockBean private MediaUrlResolver mediaUrlResolver;
 
     @Autowired
     FileControllerTest(MockMvc mockMvc) { this.mockMvc = mockMvc; }
@@ -132,8 +134,10 @@ class FileControllerTest {
     @DisplayName("image upload returns stored image response")
     void imageUploadReturnsStoredImageResponse() throws Exception {
         when(fileStorageService.storeImage(any())).thenReturn("cover.png");
+        when(mediaUrlResolver.toAbsoluteUrl("/api/v1/files/images/cover.png"))
+                .thenReturn("http://localhost/api/v1/files/images/cover.png");
         MockMultipartFile file = new MockMultipartFile("file", "cover.png", "image/png", "png".getBytes());
-        mockMvc.perform(MockMvcRequestBuilders.multipart("/api/v1/files/images").file(file).with(user("artist").roles("ARTIST"))).andExpect(status().isOk()).andExpect(jsonPath("$.data.fileName").value("cover.png")).andExpect(jsonPath("$.data.imageUrl").value("/api/v1/files/images/cover.png"));
+        mockMvc.perform(MockMvcRequestBuilders.multipart("/api/v1/files/images").file(file).with(user("artist").roles("ARTIST"))).andExpect(status().isOk()).andExpect(jsonPath("$.data.fileName").value("cover.png")).andExpect(jsonPath("$.data.imageUrl").value("http://localhost/api/v1/files/images/cover.png"));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.revplay.musicplatform.user.service.impl;
 import com.revplay.musicplatform.audit.enums.AuditActionType;
 import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.user.dto.request.UpdateProfileRequest;
 import com.revplay.musicplatform.user.dto.response.UserProfileResponse;
@@ -26,10 +27,16 @@ public class UserProfileServiceImpl implements UserProfileService {
 
     private final UserProfileRepository userProfileRepository;
     private final AuditLogService auditLogService;
+    private final MediaUrlResolver mediaUrlResolver;
 
-    public UserProfileServiceImpl(UserProfileRepository userProfileRepository, AuditLogService auditLogService) {
+    public UserProfileServiceImpl(
+            UserProfileRepository userProfileRepository,
+            AuditLogService auditLogService,
+            MediaUrlResolver mediaUrlResolver
+    ) {
         this.userProfileRepository = userProfileRepository;
         this.auditLogService = auditLogService;
+        this.mediaUrlResolver = mediaUrlResolver;
     }
 
     @Transactional(readOnly = true)
@@ -70,7 +77,7 @@ public class UserProfileServiceImpl implements UserProfileService {
                 profile.getUserId(),
                 profile.getFullName(),
                 profile.getBio(),
-                profile.getProfilePictureUrl(),
+                mediaUrlResolver.toAbsoluteUrl(profile.getProfilePictureUrl()),
                 profile.getCountry()
         );
     }

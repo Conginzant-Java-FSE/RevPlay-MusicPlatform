@@ -8,7 +8,9 @@ import static org.mockito.Mockito.when;
 
 import com.revplay.musicplatform.ads.entity.Ad;
 import com.revplay.musicplatform.ads.repository.AdRepository;
+import com.revplay.musicplatform.config.AwsProperties;
 import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.config.StorageProperties;
 import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import java.io.IOException;
@@ -61,7 +63,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("uploadAd stores mp3 file and saves active ad")
     void uploadAdStoresMp3FileAndSavesAd() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         MockMultipartFile file = mp3File();
         when(adRepository.save(any(Ad.class))).thenAnswer(invocation -> {
             Ad ad = invocation.getArgument(0);
@@ -86,7 +88,7 @@ class AdminAdServiceImplTest {
     @MethodSource("invalidTitleProvider")
     @DisplayName("uploadAd rejects blank title values")
     void uploadAdRejectsBlankTitleValues(String title) {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
 
         assertThatThrownBy(() -> service.uploadAd(title, mp3File(), VALID_DURATION))
                 .isInstanceOf(BadRequestException.class)
@@ -96,7 +98,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("uploadAd rejects non positive duration")
     void uploadAdRejectsNonPositiveDuration() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
 
         assertThatThrownBy(() -> service.uploadAd(TRIMMED_TITLE, mp3File(), INVALID_DURATION))
                 .isInstanceOf(BadRequestException.class)
@@ -106,7 +108,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("uploadAd rejects null file")
     void uploadAdRejectsNullFile() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
 
         assertThatThrownBy(() -> service.uploadAd(TRIMMED_TITLE, null, VALID_DURATION))
                 .isInstanceOf(BadRequestException.class)
@@ -116,7 +118,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("uploadAd rejects empty multipart file")
     void uploadAdRejectsEmptyMultipartFile() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         MockMultipartFile file = new MockMultipartFile(FILE_PARAM, MP3_NAME, AUDIO_MPEG, new byte[0]);
 
         assertThatThrownBy(() -> service.uploadAd(TRIMMED_TITLE, file, VALID_DURATION))
@@ -127,7 +129,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("uploadAd rejects non mp3 file")
     void uploadAdRejectsNonMp3File() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         MockMultipartFile file = new MockMultipartFile(FILE_PARAM, WAV_NAME, AUDIO_WAV, AUDIO_BYTES.getBytes());
 
         assertThatThrownBy(() -> service.uploadAd(TRIMMED_TITLE, file, VALID_DURATION))
@@ -139,7 +141,7 @@ class AdminAdServiceImplTest {
     @DisplayName("uploadAd fails when ads storage parent path is a file")
     void uploadAdFailsWhenAdsStorageParentPathIsAFile() throws IOException {
         Path baseFile = Files.createFile(tempDir.resolve("blocked-base"));
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(baseFile));
+        AdminAdServiceImpl service = service(baseFile);
 
         assertThatThrownBy(() -> service.uploadAd(TRIMMED_TITLE, mp3File(), VALID_DURATION))
                 .isInstanceOf(BadRequestException.class)
@@ -149,7 +151,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("deactivateAd marks existing ad inactive")
     void deactivateAdMarksExistingAdInactive() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         Ad existing = ad(true);
         when(adRepository.findById(AD_ID)).thenReturn(Optional.of(existing));
         when(adRepository.save(existing)).thenReturn(existing);
@@ -163,7 +165,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("deactivateAd throws when ad is missing")
     void deactivateAdThrowsWhenAdIsMissing() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         when(adRepository.findById(AD_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.deactivateAd(AD_ID))
@@ -174,7 +176,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("activateAd marks existing ad active")
     void activateAdMarksExistingAdActive() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         Ad existing = ad(false);
         when(adRepository.findById(AD_ID)).thenReturn(Optional.of(existing));
         when(adRepository.save(existing)).thenReturn(existing);
@@ -188,7 +190,7 @@ class AdminAdServiceImplTest {
     @Test
     @DisplayName("activateAd throws when ad is missing")
     void activateAdThrowsWhenAdIsMissing() {
-        AdminAdServiceImpl service = new AdminAdServiceImpl(adRepository, storageProperties(tempDir.resolve(BASE_DIR_NAME)));
+        AdminAdServiceImpl service = service(tempDir.resolve(BASE_DIR_NAME));
         when(adRepository.findById(AD_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.activateAd(AD_ID))
@@ -213,6 +215,15 @@ class AdminAdServiceImplTest {
         properties.setBaseDir(baseDir.toString());
         properties.setAdsDir(ADS_DIR_NAME);
         return properties;
+    }
+
+    private AdminAdServiceImpl service(Path baseDir) {
+        StorageProperties storageProperties = new StorageProperties();
+        storageProperties.setType("local");
+
+        AwsProperties awsProperties = new AwsProperties();
+
+        return new AdminAdServiceImpl(adRepository, storageProperties(baseDir), storageProperties, awsProperties, null);
     }
 
     private Ad ad(boolean active) {

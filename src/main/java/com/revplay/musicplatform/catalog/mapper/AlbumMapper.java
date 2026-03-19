@@ -6,10 +6,17 @@ import com.revplay.musicplatform.catalog.dto.request.AlbumCreateRequest;
 import com.revplay.musicplatform.catalog.dto.request.AlbumUpdateRequest;
 import com.revplay.musicplatform.catalog.dto.response.AlbumResponse;
 import com.revplay.musicplatform.catalog.entity.Album;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import org.springframework.stereotype.Component;
 
 @Component
 public class AlbumMapper {
+    private final MediaUrlResolver mediaUrlResolver;
+
+    public AlbumMapper(MediaUrlResolver mediaUrlResolver) {
+        this.mediaUrlResolver = mediaUrlResolver;
+    }
+
     public Album toEntity(AlbumCreateRequest request, Long artistId) {
         Album album = new Album();
         album.setArtistId(artistId);
@@ -33,7 +40,7 @@ public class AlbumMapper {
         response.setArtistId(album.getArtistId());
         response.setTitle(album.getTitle());
         response.setDescription(album.getDescription());
-        response.setCoverArtUrl(album.getCoverArtUrl());
+        response.setCoverArtUrl(mediaUrlResolver.toAbsoluteUrl(album.getCoverArtUrl()));
         response.setReleaseDate(album.getReleaseDate());
         return response;
     }

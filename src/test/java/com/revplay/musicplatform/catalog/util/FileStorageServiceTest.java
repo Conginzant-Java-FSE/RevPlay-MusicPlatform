@@ -3,7 +3,9 @@ package com.revplay.musicplatform.catalog.util;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.revplay.musicplatform.config.AwsProperties;
 import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.config.StorageProperties;
 import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import java.nio.file.Files;
@@ -110,6 +112,12 @@ class FileStorageServiceTest {
         properties.setSongsDir(SONGS);
         properties.setPodcastsDir(PODCASTS);
         properties.setImagesDir(IMAGES);
-        return new FileStorageService(properties);
+
+        StorageProperties storageProperties = new StorageProperties();
+        storageProperties.setType("local");
+
+        AwsProperties awsProperties = new AwsProperties();
+
+        return new FileStorageService(properties, storageProperties, awsProperties, null);
     }
 }

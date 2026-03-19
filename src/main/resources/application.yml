@@ -64,3 +64,13 @@ revplay:
 logging:
   level:
     com.revplay: INFO
+
+file:
+  storage:
+    type: ${FILE_STORAGE_TYPE:local}
+
+ai:
+  provider: groq
+  api-key: ${api-key:}
+  url: ${AI_API_URL:https://api.groq.com/openai/v1/chat/completions}
+  model: ${AI_MODEL:llama-3.1-8b-instant}
