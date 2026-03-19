@@ -6,6 +6,7 @@ import com.revplay.musicplatform.artist.dto.request.ArtistCreateRequest;
 import com.revplay.musicplatform.artist.dto.request.ArtistUpdateRequest;
 import com.revplay.musicplatform.artist.entity.Artist;
 import com.revplay.musicplatform.artist.enums.ArtistType;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -14,7 +15,7 @@ import org.junit.jupiter.api.Test;
 @Tag("unit")
 class ArtistMapperTest {
 
-    private final ArtistMapper mapper = new ArtistMapper();
+    private final ArtistMapper mapper = new ArtistMapper(new MediaUrlResolver());
 
     @Test
     @DisplayName("toEntity maps artist create request")
@@ -55,7 +56,7 @@ class ArtistMapperTest {
         artist.setUserId(2L);
         artist.setDisplayName("Name");
         artist.setBio("Bio");
-        artist.setBannerImageUrl("img");
+        artist.setBannerImageUrl("http://cdn.example.com/img");
         artist.setArtistType(ArtistType.MUSIC);
         artist.setVerified(Boolean.TRUE);
         artist.setCreatedAt(LocalDateTime.parse("2026-01-01T10:00:00"));
@@ -65,5 +66,6 @@ class ArtistMapperTest {
 
         assertThat(response.getArtistId()).isEqualTo(1L);
         assertThat(response.getVerified()).isTrue();
+        assertThat(response.getBannerImageUrl()).isEqualTo("http://cdn.example.com/img");
     }
 }

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.revplay.musicplatform.audit.enums.AuditActionType;
 import com.revplay.musicplatform.audit.enums.AuditEntityType;
 import com.revplay.musicplatform.audit.service.AuditLogService;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import com.revplay.musicplatform.security.AuthenticatedUserPrincipal;
 import com.revplay.musicplatform.user.dto.request.UpdateProfileRequest;
 import com.revplay.musicplatform.user.dto.response.UserProfileResponse;
@@ -46,12 +47,14 @@ class UserProfileServiceImplTest {
     private UserProfileRepository userProfileRepository;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private MediaUrlResolver mediaUrlResolver;
 
     private UserProfileServiceImpl userProfileService;
 
     @BeforeEach
     void setUp() {
-        userProfileService = new UserProfileServiceImpl(userProfileRepository, auditLogService);
+        userProfileService = new UserProfileServiceImpl(userProfileRepository, auditLogService, mediaUrlResolver);
     }
 
     @Test
@@ -59,11 +62,13 @@ class UserProfileServiceImplTest {
     void getProfileSelf() {
         AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(USER_ID, "user", UserRole.LISTENER);
         when(userProfileRepository.findByUserId(USER_ID)).thenReturn(Optional.of(profile(USER_ID, FULL_NAME)));
+        when(mediaUrlResolver.toAbsoluteUrl(PIC)).thenReturn("http://localhost/" + PIC);
 
         UserProfileResponse response = userProfileService.getProfile(USER_ID, principal);
 
         assertThat(response.userId()).isEqualTo(USER_ID);
         assertThat(response.fullName()).isEqualTo(FULL_NAME);
+        assertThat(response.profilePictureUrl()).isEqualTo("http://localhost/" + PIC);
     }
 
     @Test
@@ -71,6 +76,7 @@ class UserProfileServiceImplTest {
     void getProfileAdmin() {
         AuthenticatedUserPrincipal principal = new AuthenticatedUserPrincipal(ADMIN_ID, "admin", UserRole.ADMIN);
         when(userProfileRepository.findByUserId(USER_ID)).thenReturn(Optional.of(profile(USER_ID, FULL_NAME)));
+        when(mediaUrlResolver.toAbsoluteUrl(PIC)).thenReturn("http://localhost/" + PIC);
 
         UserProfileResponse response = userProfileService.getProfile(USER_ID, principal);
 
@@ -106,6 +112,7 @@ class UserProfileServiceImplTest {
         UpdateProfileRequest request = new UpdateProfileRequest("  " + NEW_NAME + "  ", BIO, PIC, COUNTRY);
         when(userProfileRepository.findByUserId(USER_ID)).thenReturn(Optional.of(existing));
         when(userProfileRepository.save(any(UserProfile.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(mediaUrlResolver.toAbsoluteUrl(PIC)).thenReturn("http://localhost/" + PIC);
 
         UserProfileResponse response = userProfileService.updateProfile(USER_ID, request, principal);
 
@@ -134,6 +141,7 @@ class UserProfileServiceImplTest {
         UserProfile userProfile = new UserProfile();
         userProfile.setUserId(userId);
         userProfile.setFullName(fullName);
+        userProfile.setProfilePictureUrl(PIC);
         userProfile.setCreatedAt(Instant.now().minusSeconds(60));
         userProfile.setUpdatedAt(Instant.now().minusSeconds(10));
         return userProfile;

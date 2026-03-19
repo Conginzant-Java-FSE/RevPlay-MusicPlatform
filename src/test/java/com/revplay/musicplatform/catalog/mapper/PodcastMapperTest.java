@@ -6,6 +6,7 @@ import com.revplay.musicplatform.catalog.dto.request.PodcastCreateRequest;
 import com.revplay.musicplatform.catalog.dto.request.PodcastUpdateRequest;
 import com.revplay.musicplatform.catalog.entity.Podcast;
 import com.revplay.musicplatform.catalog.enums.ContentVisibility;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -14,7 +15,7 @@ import org.junit.jupiter.api.Test;
 @Tag("unit")
 class PodcastMapperTest {
 
-    private final PodcastMapper mapper = new PodcastMapper();
+    private final PodcastMapper mapper = new PodcastMapper(new MediaUrlResolver());
 
     @Test
     @DisplayName("toEntity maps podcast create request")
@@ -58,7 +59,7 @@ class PodcastMapperTest {
         podcast.setCategoryId(3L);
         podcast.setTitle("T");
         podcast.setDescription("D");
-        podcast.setCoverImageUrl("U");
+        podcast.setCoverImageUrl("http://cdn.example.com/U");
         podcast.setVisibility(ContentVisibility.PUBLIC);
         podcast.setCreatedAt(LocalDateTime.parse("2026-01-01T10:00:00"));
 
@@ -66,5 +67,6 @@ class PodcastMapperTest {
 
         assertThat(response.getPodcastId()).isEqualTo(1L);
         assertThat(response.getCreatedAt()).isEqualTo(LocalDateTime.parse("2026-01-01T10:00:00"));
+        assertThat(response.getCoverImageUrl()).isEqualTo("http://cdn.example.com/U");
     }
 }

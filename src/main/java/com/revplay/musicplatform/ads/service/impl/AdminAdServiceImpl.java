@@ -3,7 +3,9 @@ package com.revplay.musicplatform.ads.service.impl;
 import com.revplay.musicplatform.ads.entity.Ad;
 import com.revplay.musicplatform.ads.repository.AdRepository;
 import com.revplay.musicplatform.ads.service.AdminAdService;
+import com.revplay.musicplatform.config.AwsProperties;
 import com.revplay.musicplatform.config.FileStorageProperties;
+import com.revplay.musicplatform.config.StorageProperties;
 import com.revplay.musicplatform.exception.BadRequestException;
 import com.revplay.musicplatform.exception.ResourceNotFoundException;
 import java.io.IOException;
@@ -15,9 +17,14 @@ import java.util.Locale;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 @Service
 public class AdminAdServiceImpl implements AdminAdService {
@@ -26,38 +33,37 @@ public class AdminAdServiceImpl implements AdminAdService {
 
     private final AdRepository adRepository;
     private final FileStorageProperties fileStorageProperties;
+    private final StorageProperties storageProperties;
+    private final AwsProperties awsProperties;
+    private final S3Client s3Client;
 
-    public AdminAdServiceImpl(AdRepository adRepository, FileStorageProperties fileStorageProperties) {
+    public AdminAdServiceImpl(AdRepository adRepository, FileStorageProperties fileStorageProperties,
+                              StorageProperties storageProperties, AwsProperties awsProperties,
+                              @Nullable S3Client s3Client) {
         this.adRepository = adRepository;
         this.fileStorageProperties = fileStorageProperties;
+        this.storageProperties = storageProperties;
+        this.awsProperties = awsProperties;
+        this.s3Client = s3Client;
     }
 
     @Override
     @Transactional
     public Ad uploadAd(String title, MultipartFile file, Integer durationSeconds) {
         validateInput(title, file, durationSeconds);
-        Path adsDir = Path.of(fileStorageProperties.getBaseDir(), fileStorageProperties.getAdsDir());
-
-        try {
-            Files.createDirectories(adsDir);
-        } catch (IOException e) {
-            LOGGER.error("Failed to create ads directory {}", adsDir.toAbsolutePath(), e);
-            throw new BadRequestException("Could not initialize ads storage");
-        }
-
         String filename = UUID.randomUUID() + ".mp3";
-        Path targetPath = adsDir.resolve(filename);
-        try {
-            Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            LOGGER.error("Failed to store ad file {}", targetPath.toAbsolutePath(), e);
-            throw new BadRequestException("Could not store ad audio file");
+        String mediaUrl;
+
+        if (isS3Storage()) {
+            mediaUrl = uploadAdToS3(file, filename);
+        } else {
+            mediaUrl = storeAdLocally(file, filename);
         }
 
         LocalDateTime now = LocalDateTime.now();
         Ad ad = new Ad();
         ad.setTitle(title.trim());
-        ad.setMediaUrl("/" + fileStorageProperties.getBaseDir() + "/" + fileStorageProperties.getAdsDir() + "/" + filename);
+        ad.setMediaUrl(mediaUrl);
         ad.setDurationSeconds(durationSeconds);
         ad.setIsActive(true);
         ad.setStartDate(now);
@@ -66,6 +72,41 @@ public class AdminAdServiceImpl implements AdminAdService {
         Ad saved = adRepository.save(ad);
         LOGGER.info("Ad uploaded successfully: adId={}, title={}", saved.getId(), saved.getTitle());
         return saved;
+    }
+
+    private String storeAdLocally(MultipartFile file, String filename) {
+        Path adsDir = Path.of(fileStorageProperties.getBaseDir(), fileStorageProperties.getAdsDir());
+        try {
+            Files.createDirectories(adsDir);
+        } catch (IOException e) {
+            LOGGER.error("Failed to create ads directory {}", adsDir.toAbsolutePath(), e);
+            throw new BadRequestException("Could not initialize ads storage");
+        }
+
+        Path targetPath = adsDir.resolve(filename);
+        try {
+            Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            LOGGER.error("Failed to store ad file {}", targetPath.toAbsolutePath(), e);
+            throw new BadRequestException("Could not store ad audio file");
+        }
+        return "/" + fileStorageProperties.getBaseDir() + "/" + fileStorageProperties.getAdsDir() + "/" + filename;
+    }
+
+    private String uploadAdToS3(MultipartFile file, String filename) {
+        String key = fileStorageProperties.getAdsDir() + "/" + filename;
+        try {
+            PutObjectRequest request = PutObjectRequest.builder()
+                .bucket(awsProperties.getS3().getBucket())
+                .key(key)
+                .contentType(file.getContentType())
+                .build();
+            s3Client.putObject(request, RequestBody.fromBytes(file.getBytes()));
+            return buildPublicUrl(key);
+        } catch (IOException | S3Exception e) {
+            LOGGER.error("Failed to upload ad file to S3 with key {}", key, e);
+            throw new BadRequestException("Could not store ad audio file");
+        }
     }
 
     @Override
@@ -108,5 +149,13 @@ public class AdminAdServiceImpl implements AdminAdService {
         if (!isMp3) {
             throw new BadRequestException("Only mp3 files are allowed");
         }
+    }
+
+    private boolean isS3Storage() {
+        return "s3".equalsIgnoreCase(storageProperties.getType());
+    }
+
+    private String buildPublicUrl(String key) {
+        return "https://" + awsProperties.getS3().getBucket() + ".s3." + awsProperties.getRegion() + ".amazonaws.com/" + key;
     }
 }

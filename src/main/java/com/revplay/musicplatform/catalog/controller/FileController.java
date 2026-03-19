@@ -5,6 +5,7 @@ import com.revplay.musicplatform.catalog.dto.response.ImageUploadResponse;
 import com.revplay.musicplatform.catalog.util.FileStorageService;
 import com.revplay.musicplatform.common.constants.ApiPaths;
 import com.revplay.musicplatform.common.response.ApiResponse;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
@@ -38,9 +39,11 @@ public class FileController {
     private static final MediaType AUDIO_MPEG = MediaType.parseMediaType("audio/mpeg");
     private static final int STREAM_BUFFER_SIZE = 64 * 1024;
     private final FileStorageService fileStorageService;
+    private final MediaUrlResolver mediaUrlResolver;
 
-    public FileController(FileStorageService fileStorageService) {
+    public FileController(FileStorageService fileStorageService, MediaUrlResolver mediaUrlResolver) {
         this.fileStorageService = fileStorageService;
+        this.mediaUrlResolver = mediaUrlResolver;
     }
 
     @GetMapping("/songs/{fileName}")
@@ -75,7 +78,7 @@ public class FileController {
     public ResponseEntity<ApiResponse<ImageUploadResponse>> uploadImage(@RequestPart("file") MultipartFile file) {
         LOGGER.info("Uploading image file via /api/v1/files/images");
         String storedFileName = fileStorageService.storeImage(file);
-        String imageUrl = ApiPaths.FILES + "/images/" + storedFileName;
+        String imageUrl = mediaUrlResolver.toAbsoluteUrl(ApiPaths.FILES + "/images/" + storedFileName);
         ImageUploadResponse response = new ImageUploadResponse(storedFileName, imageUrl);
         return ResponseEntity.ok(ApiResponse.success("Image uploaded successfully", response));
     }

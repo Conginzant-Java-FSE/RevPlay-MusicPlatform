@@ -1,0 +1,50 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:revplay_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  mail:
+    host: localhost
+    port: 2525
+    username: test
+    password: test
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+app:
+  audit:
+    internal-api-key: test-internal-audit-key
+  security:
+    jwt:
+      secret: test-secret-key-test-secret-key-test-secret-key
+      access-token-expiration-seconds: 3600
+      refresh-token-expiration-seconds: 1209600
+
+file:
+  storage:
+    type: local
+
+revplay:
+  upload:
+    base-dir: target/test-uploads
+    songs-dir: songs
+    podcasts-dir: podcasts
+    images-dir: images
+    ads-dir: ads
+
+ai:
+  api-key: test-key
+  url: http://localhost:65535/mock-ai
+  model: test-model

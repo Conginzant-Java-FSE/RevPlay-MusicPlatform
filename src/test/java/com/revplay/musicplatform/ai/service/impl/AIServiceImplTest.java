@@ -6,7 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.revplay.musicplatform.ai.integration.OllamaClient;
+import com.revplay.musicplatform.ai.service.GrokService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -24,34 +24,34 @@ class AIServiceImplTest {
     private static final String NORMAL_QUERY = "  what premium benefits do i get?  ";
 
     @Mock
-    private OllamaClient ollamaClient;
+    private GrokService grokService;
 
     private AIServiceImpl aiService;
 
     @BeforeEach
     void setUp() {
-        aiService = new AIServiceImpl(ollamaClient);
+        aiService = new AIServiceImpl(grokService);
     }
 
     @Test
-    @DisplayName("support query returns support message without calling Ollama")
-    void supportQueryBypassesOllama() {
+    @DisplayName("support query returns support message without calling Grok")
+    void supportQueryBypassesGrok() {
         String response = aiService.getAIResponse(SUPPORT_QUERY);
 
         assertThat(response).isEqualTo("Please contact RevPlay support at revplay.support@gmail.com");
-        verifyNoInteractions(ollamaClient);
+        verifyNoInteractions(grokService);
     }
 
     @Test
     @DisplayName("normal query builds prompt and cleans leaked assistant template text")
     void normalQueryBuildsPromptAndCleansResponse() {
-        when(ollamaClient.generateResponse(anyString()))
+        when(grokService.generateResponse(anyString()))
                 .thenReturn("<|assistant|>\nAssistant: Premium removes ads. You can download songs offline");
 
         String response = aiService.getAIResponse(NORMAL_QUERY);
 
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
-        verify(ollamaClient).generateResponse(promptCaptor.capture());
+        verify(grokService).generateResponse(promptCaptor.capture());
 
         assertThat(promptCaptor.getValue())
                 .contains("<|system|>")
@@ -61,9 +61,9 @@ class AIServiceImplTest {
     }
 
     @Test
-    @DisplayName("blank Ollama response falls back to default message")
-    void blankOllamaResponseFallsBack() {
-        when(ollamaClient.generateResponse(anyString())).thenReturn("   ");
+    @DisplayName("blank Grok response falls back to default message")
+    void blankGrokResponseFallsBack() {
+        when(grokService.generateResponse(anyString())).thenReturn("   ");
 
         String response = aiService.getAIResponse("Tell me about playlists");
 

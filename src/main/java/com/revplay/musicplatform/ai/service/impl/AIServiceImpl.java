@@ -1,7 +1,7 @@
 package com.revplay.musicplatform.ai.service.impl;
 
-import com.revplay.musicplatform.ai.integration.OllamaClient;
 import com.revplay.musicplatform.ai.service.AIService;
+import com.revplay.musicplatform.ai.service.GrokService;
 import java.util.Locale;
 import org.springframework.stereotype.Service;
 
@@ -61,10 +61,10 @@ public class AIServiceImpl implements AIService {
                     "DOWNLOADS: " +
                     "Premium users can download songs for offline listening by tapping the download icon on any song. ";
 
-    private final OllamaClient ollamaClient;
+    private final GrokService grokService;
 
-    public AIServiceImpl(OllamaClient ollamaClient) {
-        this.ollamaClient = ollamaClient;
+    public AIServiceImpl(GrokService grokService) {
+        this.grokService = grokService;
     }
 
     @Override
@@ -80,7 +80,7 @@ public class AIServiceImpl implements AIService {
                 + userPrompt.trim() + "\n</s>\n"
                 + "<|assistant|>\n";
 
-        String response = ollamaClient.generateResponse(finalPrompt);
+        String response = grokService.generateResponse(finalPrompt);
 
         if (response == null || response.isBlank()) {
             return FALLBACK_MESSAGE;

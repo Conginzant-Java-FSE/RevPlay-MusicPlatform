@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.revplay.musicplatform.catalog.dto.request.AlbumCreateRequest;
 import com.revplay.musicplatform.catalog.dto.request.AlbumUpdateRequest;
 import com.revplay.musicplatform.catalog.entity.Album;
+import com.revplay.musicplatform.common.web.MediaUrlResolver;
 import java.time.LocalDate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -13,7 +14,7 @@ import org.junit.jupiter.api.Test;
 @Tag("unit")
 class AlbumMapperTest {
 
-    private final AlbumMapper mapper = new AlbumMapper();
+    private final AlbumMapper mapper = new AlbumMapper(new MediaUrlResolver());
 
     @Test
     @DisplayName("toEntity maps album create request")
@@ -54,12 +55,13 @@ class AlbumMapperTest {
         album.setArtistId(2L);
         album.setTitle("T");
         album.setDescription("D");
-        album.setCoverArtUrl("C");
+        album.setCoverArtUrl("http://cdn.example.com/C");
         album.setReleaseDate(LocalDate.parse("2026-03-03"));
 
         var response = mapper.toResponse(album);
 
         assertThat(response.getAlbumId()).isEqualTo(1L);
         assertThat(response.getTitle()).isEqualTo("T");
+        assertThat(response.getCoverArtUrl()).isEqualTo("http://cdn.example.com/C");
     }
 }
